@@ -1,0 +1,1333 @@
+try {
+   library identifier: "devops-pipelines_branch@${env.PIPELINE_VERSION}",
+      retriever: modernSCM(
+         [
+            $class: 'GitSCMSource',
+            remote: 'https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/devops-pipelines.git',
+         ]
+     )
+}
+catch(Exception e) {
+   echo "WARNING - tried to load shared pipeline library version: ${env.PIPELINE_VERSION}, but branch/tag does not exist in library repo. Using master instead."
+   library identifier: "devops-pipelines@master",
+      retriever: modernSCM(
+         [
+            $class: 'GitSCMSource', 
+            remote: 'https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/devops-pipelines.git',
+         ]
+      )
+}
+
+def buildWithParams(def paramsMap, def jobName, def gitBranch, def pipelineBranch, def additionalJobParams){   
+   // This will keep four days worth of  builds for the JenkinsfileTemplate job
+   paramsMap['DAYS_BUILDS_TO_KEEP'] = '4'
+   // Clear out any NUMBER_BUILDS_TO_KEEP that might be set from the Jenkinsfile
+   paramsMap['NUMBER_BUILDS_TO_KEEP'] = ''
+   def jobParams = [                     
+                                   [
+                                      $class: 'StringParameterValue',
+                                      name: 'PIPELINE_VERSION',
+                        value: "${pipelineBranch}",                     
+                                   ],
+                                   [
+                                      $class: 'GitParameterValue',
+                                      name: 'GIT_BRANCH',
+                        value: gitBranch                     
+                                   ]
+                   ]
+   //If there are any additional job parameters add them to the jobParams
+   if (additionalJobParams){
+      additionalJobParams.each{
+         jobParams.add(it)
+         echo "Additional job Parameter: ${it} has been added."
+      }
+   }
+   
+   // Set job parameters from input paramsMap
+   paramsMap.each { param, value ->      
+      jobParams.add([ $class: 'StringParameterValue',
+                      name: "OVERRIDE_${param}",
+                      value: "${value}"                    
+                    ])
+   }
+
+   def jobAttributes = [job: jobName,
+                        parameters: jobParams,
+                        propagate: false]   
+   def returnRunWrapper = build(jobAttributes)   
+
+   return returnRunWrapper
+         }
+
+@NonCPS
+def getNameFromParamError(String errorString)
+{
+   def paramNameMatcher = (errorString =~ /^(?:Must define )?([A-Z_]+) (?:due|is) .+$/)
+   def paramName
+   if (paramNameMatcher)
+   {
+      paramName = paramNameMatcher[0][1]
+   }
+   return paramName
+}
+
+@NonCPS
+def getListFromParamError(String errorString)
+{
+   String valueListString
+   def valueListStringMatcher = (errorString =~ /^[A-Z_]+ is [^,]+, but must be one of the following: \[([^]]+)\]$/)
+   if (valueListStringMatcher)
+   {
+      valueListString = valueListStringMatcher[0][1]
+   }
+   return valueListString?.split(/ *, */)
+}
+
+@NonCPS
+def getRandom()
+{
+   int someDigit = System.currentTimeMillis() % 10
+   return someDigit
+}
+
+def deleteTestTag(String gitUrl, String tagName) {
+   withCredentials([usernamePassword(credentialsId: 'BITBUCKET_CREDENTIALS', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASSWORD')]) 
+   {
+      env.URL_ENCODED_GIT_PASSWORD=URLEncoder.encode(GIT_PASSWORD, "UTF-8")
+      def echoOff;
+
+      def repoUrl = gitUrl - "https://"
+      def osCommand;
+      if (isUnix())
+      {
+         osCommand = "sh"
+         echoOff = "set +x"
+      }
+      else
+      {
+         osCommand = "bat"
+         echoOff = '@echo off'
+      }
+      "${osCommand}" ("""
+         ${echoOff}
+         git -c user.name=${GIT_USER} -c user.email=Do-Not-Reply@L3Harris.com push https://${GIT_USER}:${URL_ENCODED_GIT_PASSWORD}@${repoUrl} --delete ${tagName}
+      """)
+      echo """git -c user.name=${GIT_USER} -c user.email=Do-Not-Reply@L3Harris.com push https://${GIT_USER}:*****@${repoUrl} --delete ${tagName}"""
+   }
+}
+
+// create map with tool versions specified in Jenkins parameters
+def getToolVersionsMap() {
+   def toolVerMap = [:]
+   (TOOL_VERSIONS =~ / *([a-z]+)=([^\s,]+)/).each { toolVersionMatch ->
+      toolVerMap[toolVersionMatch[1]] = toolVersionMatch[2]
+   }
+   return toolVerMap
+}
+//Retrieves any additional Job Parameter for a specific jobName
+def getAdditionalJobParams(String jobName){
+   def jobParams = []
+   if (jobName == 'make'){
+      jobParams.add([ $class: 'StringParameterValue',
+                      name: "PACKAGE_ARCHIVE_TYPE",
+                      value: "zip"                    
+                    ])
+   }
+   return jobParams
+}
+// Get correct version for specified build tool
+def getToolVersion(String gitUrl, String tool, Map toolVerMap) {
+   // Get the latest release version by default
+   def version
+   // Use version from parameters if provided
+   if (toolVerMap.containsKey(tool))
+   {
+      version = toolVerMap[tool]
+   }
+   else
+   {
+      // See if the current GIT_BRANCH exists for the tool and use that
+      def branchToCheck = env.GIT_BRANCH - "origin/"
+
+      def branchCheckReturnCode = sh script: "git ls-remote --heads --exit-code '${gitUrl}' ${branchToCheck}", returnStatus: true
+      if (branchCheckReturnCode == 0)
+      {
+         version = branchToCheck
+      }
+      else
+      {
+         // Get the latest release version
+         version = sh script: "git ls-remote '${gitUrl}' refs/heads/release/* | tail -n 1 | cut -f 2", returnStdout: true
+         version -= "refs/heads/"
+      }
+   }
+   return version.trim()
+}
+
+// Pull the code for the specified tool repo
+def checkoutBranch(String gitUrl, String toolRepo, Map toolVerMap) {
+   def version = getToolVersion(gitUrl, toolRepo, toolVerMap)
+   // need to pull the tool's repo since we're working in the test repo
+   checkout scm: [$class: 'GitSCM', 
+                  branches: [[name: version]], 
+                  extensions: [[$class: 'SubmoduleOption', 
+                                disableSubmodules: false, 
+                                parentCredentials: true, 
+                                recursiveSubmodules: true, 
+                                reference: '', 
+                                trackingSubmodules: false]], 
+                  userRemoteConfigs: [[url: gitUrl]]]
+   
+   return version
+}
+
+@NonCPS
+def setParametersForTool(Map pipelineParams, String toolName) {
+
+   def toolParameterMap = ['cmake':             [PREBUILD_TOOL: 'cmake',
+                                                 PROJECT_ROOT: 'make',
+                                                 CMAKE_LISTS_PATH: '../',
+                                                 PREBUILD_DIRECTORY: 'DOCPF_Prebuild'],
+                           'cpack':             [PROJECT_ROOT: 'make',
+                                                 CMAKE_LISTS_PATH: '../',
+                                                 PREBUILD_DIRECTORY: 'make/DOCPF_Prebuild',
+                                                 CREATE_INSTALLER_CHOICE: 'cpack',
+                                                 PACKAGE_NAME: 'ExampleApp'],
+                           'qmake':             [PREBUILD_TOOL: 'qmake',
+                                                 PROJECT_ROOT: 'qmake',
+                                                 QMAKE_FILE: '../QMake.pro',
+                                                 PREBUILD_DIRECTORY: 'QMake_Prebuild'],
+                           'make':              [BUILD_TOOL: 'make',
+                                                 PROJECT_ROOT: 'make',
+                                                 PREBUILD_DIRECTORY: ''],
+                           'qmake_make':        [PREBUILD_TOOL: 'qmake',
+                                                 BUILD_TOOL: 'make',
+                                                 PROJECT_ROOT: 'qmake',
+                                                 PREBUILD_DIRECTORY: 'QMake_Prebuild'],
+                           'msbuild':           [BUILD_TOOL: 'msbuild',
+                                                 PROJECT_ROOT: 'msbuild',
+                                                 SOLUTION_FILE: 'src\\HelloWorld\\HelloWorld.sln',
+                                                 NUSPEC_FILE: 'HelloWorld.nuspec',
+                                                 TEST_BINARY_PATTERN: '*Test.dll',
+                                                 BUILD_CONFIGURATION: 'Release',
+                                                 BUILD_PLATFORM: 'Any CPU',
+                                                 VCVARS_BATCH_FILE: 'C:/Program Files (x86)/Microsoft Visual Studio/2017/Professional/VC/Auxiliary/Build/vcvarsall.bat',
+                                                 VCVARS_ARCH: 'x64',
+                                                 OUTPUT_PATH: "${env.workspace}\\msbuild"],
+                           'msbuild_cpp':       [BUILD_TOOL: 'msbuild',
+                                                 PREBUILD_TOOL: 'nuget',
+                                                 RUN_PREBUILD: 'true',
+                                                 ARTIFACT_MANAGEMENT_CHOICE: 'nuget',
+                                                 PROJECT_ROOT: 'make',
+                                                 SOLUTION_FILE: 'src\\HelloWorld.sln',
+                                                 BUILD_CONFIGURATION: 'Release',
+                                                 BUILD_PLATFORM: 'x64',
+                                                 STYLE_CHECK_CHOICE: ''],
+                           'gradle':            [BUILD_TOOL: 'gradle',
+                                                PROJECT_ROOT: 'maven',
+                                                ARTIFACT_MANAGEMENT_CHOICE: 'maven',
+                                                ARTIFACT_LOCATION: 'target',
+                                                ARTIFACT_FILENAME_PATTERN: '*.jar',
+                                                ARTIFACT_URL: 'https://lnsvr0310.gcsd.harris.com:8443/artifactory/devops_factory_maven/',
+                                                GROUP_ID: 'Maven',
+                                                ARTIFACT_ID: 'HelloWorld',
+                                                ARTIFACT_DEPLOYMENT_SEARCH_PATTERN: '.+\\.jar',
+                                                ARTIFACT_DEPLOYMENT_SEARCH_REGEX_FLAG: 'true'],
+                           'maven':             [BUILD_TOOL: 'maven',
+                                                PROJECT_ROOT: 'maven',
+                                                ARTIFACT_MANAGEMENT_CHOICE: 'maven',
+                                                ARTIFACT_LOCATION: 'target',
+                                                ARTIFACT_FILENAME_PATTERN: '*.jar',
+                                                ARTIFACT_URL: 'https://lnsvr0310.gcsd.harris.com:8443/artifactory/devops_factory_maven/',
+                                                GROUP_ID: 'Maven',
+                                                ARTIFACT_ID: 'HelloWorld',
+                                                ARTIFACT_DEPLOYMENT_SEARCH_PATTERN: '.+\\.jar',
+                                                ARTIFACT_DEPLOYMENT_SEARCH_REGEX_FLAG: 'true'],
+                           'vxworks':           [BUILD_TOOL: 'vxworks',
+                                                PROJECT_ROOT: 'vxworks',
+                                                WIND_HOME: "C:\\WindRiver39",
+                                                VXWORKS_PACKAGE: 'vxworks-6.9',
+                                                VXWORKS_ADDITIONAL_PARMS: '--no-print-directory BUILD_SPEC=SIMNTgnu DEBUG_MODE=1 TRACE=1'],
+                           'setuptools':        [BUILD_TOOL: 'setuptools',
+                                                PROJECT_ROOT: 'setuptools'],
+                           'debian_pkg':        [CREATE_INSTALLER_CHOICE: 'debian',
+                                                PROJECT_ROOT: 'make',
+                                                PACKAGE_INSTALL_PATH: 'usr/bin',
+                                                INSTALLER_CONFIG_FILE: 'make/installer/control',
+                                                PACKAGE_NAME: 'ExampleApp',
+                                                ARTIFACT_REPLICATE_LOCAL_PATH_FLAG: 'true',
+                                                ARTIFACT_ID: 'ExampleApp',
+                                                ARTIFACT_LOCATION: 'src/exampleapp',
+                                                ARTIFACT_FILENAME_PATTERN: 'exampleapp'],
+                           'googletest':        [UNIT_TEST_CHOICE: 'googletest',
+                                                PROJECT_ROOT: 'make',
+                                                UNIT_TEST_DIRECTORY: 'test/src',
+                                                GT_TEST_BINARY: 'src\\x64\\Release\\HelloWorldTest.exe'],
+                           'googletest_linux':  [UNIT_TEST_CHOICE: 'googletest',
+                                                PROJECT_ROOT: 'make',
+                                                UNIT_TEST_DIRECTORY: 'test/src',
+                                                GT_TEST_BINARY: 'test/src/testAll'],
+                           'ctest':             [UNIT_TEST_CHOICE: 'ctest',
+                                                PROJECT_ROOT: 'make',
+                                                UNIT_TEST_DIRECTORY: 'test/src'],
+                           'vstest':            [UNIT_TEST_CHOICE: 'vstest',
+                                                PROJECT_ROOT: 'msbuild',
+                                                TEST_BINARY_PATTERN: '*Test.dll'],
+                           'junit':             [UNIT_TEST_CHOICE: 'junit',
+                                                PROJECT_ROOT: 'maven'],
+                           'unittest':          [UNIT_TEST_CHOICE: 'unittest',
+                                                PROJECT_ROOT: 'setuptools',
+                                                UNIT_TEST_DIRECTORY: 'test/unittest/'],
+                           'pytest':            [UNIT_TEST_CHOICE: 'pytest',
+                                                FUNCTIONAL_TEST_CHOICE: 'pytest',
+                                                PROJECT_ROOT: 'setuptools',
+                                                UNIT_TEST_DIRECTORY: 'test/pytest/',
+                                                FUNCTIONAL_TEST_TYPES: 'not fail',
+                                                UNIT_TEST_TYPES: 'not fail',
+                                                FUNCTIONAL_TEST_DIRECTORY: 'test/pytest'],
+                           'qttest':            [UNIT_TEST_CHOICE: 'qttest',
+                                                PROJECT_ROOT: 'qmake',
+                                                UNIT_TEST_DIRECTORY: 'QMake_Prebuild/test/qttest'],
+                           'sonarqube':         [STATIC_CODE_ANALYSIS_CHOICE: 'sonarqube',
+                                                PROJECT_ROOT: 'maven',
+                                                SONARQUBE_URL: 'http://lnvle2289.gs.myharris.net:9000',
+                                                BUILD_TOOL: 'maven'],
+                           'klocwork':          [STATIC_CODE_ANALYSIS_CHOICE: 'klocwork',
+                                                 PROJECT_ROOT: 'msbuild',
+                                                 SOLUTION_FILE: 'src\\HelloWorld\\HelloWorld.sln',
+                                                 BUILD_CONFIGURATION: 'Release',
+                                                 BUILD_PLATFORM: 'Any CPU'],
+                           'cppcheck':          [STATIC_CODE_ANALYSIS_CHOICE: 'cppcheck',
+                                                PROJECT_ROOT: 'make',
+                                                SOURCE_CODE_DIRECTORY: 'src'],
+                           'pylint':            [STATIC_CODE_ANALYSIS_CHOICE: 'pylint',
+                                                STYLE_CHECK_CHOICE: 'pylint',
+                                                PROJECT_ROOT: 'setuptools',
+                                                SOURCE_CODE_DIRECTORY: 'src',
+                                                PYLINT_IGNORED_WARNINGS: 'all'],
+                           'spotbugs':          [STATIC_CODE_ANALYSIS_CHOICE: 'spotbugs',
+                                                PROJECT_ROOT: 'maven',
+                                                ARTIFACT_LOCATION: 'target'],
+                           'spotbugs_cli':      [STATIC_CODE_ANALYSIS_CHOICE: 'spotbugs_cli',
+                                                PROJECT_ROOT: 'maven',
+                                                ARTIFACT_LOCATION: 'target'],
+                           'spotbugs_pom':      [STATIC_CODE_ANALYSIS_CHOICE: 'spotbugs_pom',
+                                                PROJECT_ROOT: 'maven',
+                                                ARTIFACT_LOCATION: 'target'],
+                           'fortify':           [STATIC_APPLICATION_SECURITY_CHOICE: 'fortify',
+                                                PROJECT_ROOT: 'msbuild'],
+                           'coverity':          [STATIC_APPLICATION_SECURITY_CHOICE: 'coverity',
+                                                PROJECT_ROOT: 'msbuild',
+                                                COVERITY_BIN: 'C:/Users/Administrator/AppData/Local/Coverity/Coverity Static Analysis/bin'],
+                           'opencover':         [CODE_COVERAGE_CHOICE: 'opencover',
+                                                 PROJECT_ROOT: 'msbuild',
+                                                 TEST_BINARY_PATTERN: '*Test.dll',
+                                                 OUTPUT_PATH: "${env.workspace}\\msbuild"],
+                           'opencppcoverage':   [CODE_COVERAGE_CHOICE: 'opencppcoverage',
+                                                 PROJECT_ROOT: 'make',
+                                                 GT_TEST_BINARY: 'src\\x64\\Release\\HelloWorldTest.exe'],
+                           'cobertura':         [CODE_COVERAGE_CHOICE: 'cobertura',
+                                                 PROJECT_ROOT: 'maven'],
+                           'jacoco':            [CODE_COVERAGE_CHOICE: 'jacoco',
+                                                 PROJECT_ROOT: 'maven'],
+                           'gcov':              [CODE_COVERAGE_CHOICE: 'gcov',
+                                                 PROJECT_ROOT: 'make'],
+                           'coverage':          [CODE_COVERAGE_CHOICE: 'coverage',
+                                                 PROJECT_ROOT: 'setuptools',
+                                                 SOURCE_CODE_DIRECTORY: 'src'],
+                           'pytest-cov':        [CODE_COVERAGE_CHOICE: 'pytest-cov',
+                                                 PROJECT_ROOT: 'setuptools',
+                                                 UNIT_TEST_DIRECTORY: 'test/unittest/',
+                                                 SOURCE_CODE_DIRECTORY: 'src'],
+                           'stylecop':          [STYLE_CHECK_CHOICE: 'stylecop',
+                                                 PREBUILD_TOOL: 'nuget',
+                                                 RUN_PREBUILD: 'true'],
+                           'checkstyle':        [STYLE_CHECK_CHOICE: 'checkstyle',
+                                                PROJECT_ROOT: 'maven',
+                                                STYLE_CONFIG_CHOICE: 'google',
+                                                STYLE_CONFIG_FILEPATH: '',
+                                                SOURCE_CODE_DIRECTORY: 'src'],
+                           'generic':           [ARTIFACT_MANAGEMENT_CHOICE: 'generic',
+                                                 PROJECT_ROOT: 'make',
+                                                 ARTIFACT_LOCATION: 'src/exampleapp',
+                                                 ARTIFACT_FILENAME_PATTERN: 'exampleapp',
+                                                 ARTIFACT_URL: 'https://lnsvr0310.gcsd.harris.com:8443/artifactory/devops_factory_generic',
+                                                 GROUP_ID: 'Make',
+                                                 ARTIFACT_ID: "ExampleApp",
+                                                 VERSION_NUMBER: '1.0.0',
+                                                 FORMAL_VERSION: 'false',
+                                                 ARTIFACT_REPLICATE_LOCAL_PATH_FLAG: 'false'],
+                           'generic_windows':   [ARTIFACT_MANAGEMENT_CHOICE: 'generic',
+                                                 PROJECT_ROOT: 'maven',
+                                                 ARTIFACT_LOCATION: 'target',
+                                                 ARTIFACT_FILENAME_PATTERN: '*.jar',
+                                                 ARTIFACT_URL: 'https://lnsvr0310.gcsd.harris.com:8443/artifactory/devops_factory_generic',
+                                                 GROUP_ID: 'Maven',
+                                                 ARTIFACT_ID: "HelloWorld",
+                                                 VERSION_NUMBER: '1.0.0',
+                                                 FORMAL_VERSION: 'false',
+                                                 ARTIFACT_REPLICATE_LOCAL_PATH_FLAG: 'false'],
+                           'nuget':             [PREBUILD_TOOL: 'nuget',
+                                                 ARTIFACT_MANAGEMENT_CHOICE: 'nuget',
+                                                 PROJECT_ROOT: 'msbuild',
+                                                 SOLUTION_FILE: 'src\\HelloWorld\\HelloWorld.sln',
+                                                 ARTIFACT_LOCATION: 'src/HelloWorld/bin/Release',
+                                                 ARTIFACT_FILENAME_PATTERN: '*.exe',
+                                                 ARTIFACT_URL: 'https://lnsvr0310.gcsd.harris.com:8443/artifactory/api/nuget/devops_factory_nuget',
+                                                 ARTIFACTORY_DEPENDENCY_URL: 'https://lnsvr0310.gcsd.harris.com:8443/artifactory/api/nuget/devops_factory_nuget',
+                                                 GROUP_ID: 'MSBuild',
+                                                 ARTIFACT_ID: 'HelloWorld'],
+                           'pypi':              [ARTIFACT_MANAGEMENT_CHOICE: 'pypi',
+                                                 PROJECT_ROOT: 'setuptools',
+                                                 ARTIFACT_LOCATION: 'src',
+                                                 ARTIFACT_FILENAME_PATTERN: '*.pyc',
+                                                 ARTIFACT_URL: 'https://lnsvr0310.gcsd.harris.com:8443/artifactory/api/pypi/devops_factory_pypi',
+                                                 ARTIFACT_DESTINATION_URL: '',
+                                                 GROUP_ID: 'Setuptools',
+                                                 ARTIFACT_ID: 'HelloWorld',
+                                                 VERSION_NUMBER: "1.0.0"],
+                           'debian':            [PROJECT_ROOT: 'make',
+                                                 ARTIFACT_MANAGEMENT_CHOICE: 'debian',
+                                                 ARTIFACT_LOCATION: 'src/exampleapp',
+                                                 ARTIFACT_REPLICATE_LOCAL_PATH_FLAG: 'true',
+                                                 ARTIFACT_FILENAME_PATTERN: 'exampleapp',
+                                                 ARTIFACT_URL: 'https://lnsvr0310.gcsd.harris.com:8443/artifactory/devops_factory_debian',
+                                                 GROUP_ID: 'Debian',
+                                                 ARTIFACT_ID: "ExampleApp",
+                                                 VERSION_NUMBER: '1.0.0',
+                                                 FORMAL_VERSION: 'false',
+                                                 ARTIFACT_DEPLOYMENT_SEARCH_PATTERN: '.*\\.deb',
+                                                 ARTIFACT_DEPLOYMENT_SEARCH_REGEX_FLAG: 'true',
+                                                 ARTIFACT_MANAGEMENT_TOOL_URL: 'https://lnsvr0310.gcsd.harris.com:8443/artifactory'],   
+                           'testcomplete':      [FUNCTIONAL_TEST_CHOICE: 'testcomplete',
+                                                 PROJECT_ROOT: 'msbuild',
+                                                 TESTEXECUTE_PROJECT_SUITE_FILE: 'test/functional/HelloWorldTest/HelloWorldTest.pjs'],
+                           'testexecute':       [FUNCTIONAL_TEST_CHOICE: 'testexecute',
+                                                 PROJECT_ROOT: 'msbuild',
+                                                 TESTEXECUTE_PROJECT_SUITE_FILE: 'test/functional/HelloWorldTest/HelloWorldTest.pjs'],
+                           'deploy_artifacts':  [ANSIBLE_REPO_TYPE: 'source',
+                                                 PROJECT_ROOT: 'make',
+                                                 ANSIBLE_PLAYBOOK_NAME: 'generic',
+                                                 ANSIBLE_DIRECTORY: 'ansible',
+                                                 ANSIBLE_BRANCH: 'master',
+                                                 ANSIBLE_URL: 'https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/ansible.git',
+                                                 ARTIFACT_DEPLOYMENT_SEARCH_PATTERN: "exampleapp",
+                                                 ARTIFACT_DEPLOYMENT_SEARCH_REGEX_FLAG: 'false',
+                                                 ARTIFACT_URL: 'https://lnsvr0310.gcsd.harris.com:8443/artifactory/devops_factory_generic',
+                                                 GROUP_ID: 'Make',
+                                                 ARTIFACT_ID: "ExampleApp",
+                                                 VERSION_NUMBER: '1.0.0',
+                                                 FORMAL_VERSION: 'false',
+                                                 ARTIFACT_DEST_FOLDER: '.'],
+                           'bitbucket':         [SOURCE_CODE_TOOL: 'bitbucket',
+                                                 RELEASE_TAG: "STAGE_TEST_TAG_${BUILD_NUMBER}"],
+                           'artifactory':       [ARTIFACT_MANAGEMENT_TOOL: 'artifactory',
+                                                 PROJECT_ROOT: 'setuptools',
+                                                 ARTIFACT_MANAGEMENT_TOOL_URL: 'https://lnsvr0310.gcsd.harris.com:8443/artifactory',
+                                                 PATH_TO_ARTIFACT_TO_PROMOTE: "devops_factory_pypi/devopspkg/1.0.0a${BUILD_NUMBER}",
+                                                 FILE_NAME_OF_ARTIFACT_TO_PROMOTE: 'func_class.cpython-38.pyc',
+                                                 ARCHIVE_MODE: 'model',
+                                                 ARCHIVE_CHOICE: 'name',
+                                                 PATTERN_TO_KEEP: '(.*)_r',
+                                                 PATH_TO_ARCHIVE_REPOSITORY: 'devops_factory_generic/Archive_Test',
+                                                 ARTIFACT_PROMOTION_SUFFIX: '_r'],
+                           'package':           [PROJECT_ROOT: 'make',
+                                                 YAML_FILE: 'packaging/package.yml',
+                                                 ARTIFACT_REPLICATE_LOCAL_PATH_FLAG: 'false',
+                                                 ARTIFACT_REGEX_PATTERN_FLAG: 'false'],
+                           'zap':               [DYNAMIC_APPLICATION_SECURITY_CHOICE: 'zap',
+                                                 DYNAMIC_APPLICATION_SECURITY_TARGET: 'http://zero.webappsecurity.com',
+                                                 DYNAMIC_APPLICATION_SECURITY_ARGS: '-nostdout',
+                                                 DYNAMIC_APPLICATION_SECURITY_REPORT_FILE: 'DASTResults.html'],
+                           'quartus':           [PROJECT_ROOT: 'fpga/quartus',
+                                                 USE_PRJ_TOOL: 'true',
+                                                 PRJ_FILE: 'docpf.fpga.sample',
+                                                 FPGA_COMPILE_TOOL: 'quartus',
+                                                 FPGA_COMPILE_TCL_FILE: 'SampleQuartus.tcl'],
+                           'vivado':            [PROJECT_ROOT: 'fpga',
+                                                 FPGA_COMPILE_TOOL: 'vivado',
+                                                 FPGA_COMPILE_TCL_FILE: 'vivado/DocpfVivadoSample.tcl'],
+                           'ascent':            [PROJECT_ROOT: 'fpga/quartus',
+                                                 FPGA_LINT_CHOICE: 'ascent',
+                                                 FPGA_LINT_DIRECTORY: 'lint',
+                                                 FPGA_LINT_SCRIPT_FILE: 'ascent_lint.ctl',
+                                                 FPGA_LINT_REPORT_FILE: 'lint/ascent_lint_report.txt',
+                                                 FPGA_LINT_WAIT_TIME: 5],
+                           'meridian':          [PROJECT_ROOT: 'fpga/quartus',
+                                                 FPGA_VERIFY_CDC_CHOICE: 'meridian',
+                                                 FPGA_VERIFY_CDC_DIRECTORY: 'cdc',
+                                                 FPGA_VERIFY_CDC_SCRIPT_FILE: 'meridian_cdc.ctl',
+                                                 FPGA_VERIFY_CDC_WAIT_TIME: 5]
+                          ]
+
+   // Replace parameters with values to run the tool
+   toolParameterMap[toolName].each { key, value ->
+      pipelineParams[key] = value
+   }
+
+   return pipelineParams
+}
+
+@NonCPS
+def getAgentMap() {
+
+   // define agents for each environment
+   def agentMap = [WINDOWS: params.WINDOWS_AGENT ?: 'WINDOWS_10_LAB_AGENT',
+                   DEBIAN: params.DEBIAN_AGENT ?: 'JENKINS_AGENT_DEBIAN_10.1',
+                   CENTOS: params.CENTOS_AGENT ?: 'JENKINS_AGENT_CENTOS_7.7',
+                   UBUNTU: params.UBUNTU_AGENT ?: 'JENKINS_AGENT_UBUNTU_18.04',
+                   UNIX_SC: params.UNIX_SC_AGENT ?: 'UNIX_SC_AGENT']
+
+   return agentMap
+}
+
+/* Do a deep clone of objects, recursively cloning any java.lang.Cloneable sub-objects
+ * This won't provide a deep clone of everything (objects not implementing Cloneable 
+ * won't be cloned), but it will clone things we are likely to modify in this file.
+ */
+def deepClone(def objectToClone) {
+   // Do a shallow clone (using built-in clone lets this method be very general instead of constraining it to Maps)
+   def clonedObject = objectToClone.clone()
+   clonedObject.each { key, val = null ->
+      // if val is the same exact object as the value at this key in the original object, recurse
+      // We need to use the tedious hashCode comparison here because jenkins blocks '===' and '.is()' if you can believe it...
+      if (val != null && objectToClone[key].hashCode() == val.hashCode() && val in java.lang.Cloneable)
+      {
+         clonedObject[key] = deepClone(val)
+      }
+   }
+   return clonedObject
+}
+
+// Start by setting the name for the build before running any of the stages
+node {
+
+   currentBuild.displayName = "${params.DISPLAY_NAME}#${env.BUILD_NUMBER}"
+}
+
+pipeline {
+   options {
+      buildDiscarder(logRotator(daysToKeepStr: "4", artifactNumToKeepStr: "5"))
+      timeout(time: 9, unit: "HOURS")
+   }
+   agent { label "master" }
+   stages {
+      stage('Test Parameters') {
+         when { expression { params.RUN_PARAMETER_TESTS } }
+         steps {
+            script {
+
+               // Start with all stages set to false
+               def failedParamsMap = [JENKINS_AGENT: 'JENKINS_AGENT',
+                                      RUN_PREBUILD: 'false',
+                                      RUN_BUILD: 'false',
+                                      RUN_FPGA_COMPILE: 'false',
+                                      RUN_CREATE_INSTALLER: 'false',
+                                      RUN_UNIT_TEST: 'false',
+                                      RUN_STATIC_CODE_ANALYSIS: 'false',
+                                      RUN_STATIC_APPLICATION_SECURITY: 'false',
+                                      RUN_FPGA_LINT: 'false',
+                                      RUN_FPGA_VERIFY_CDC: 'false',
+                                      RUN_CODE_COVERAGE: 'false',
+                                      RUN_STYLE_CHECK: 'false',
+                                      RUN_ARTIFACT_MANAGEMENT: 'false',
+                                      RUN_DEPLOY_ARTIFACTS: 'false',
+                                      RUN_FUNCTIONAL_TEST: 'false',
+                                      RUN_DYNAMIC_APPLICATION_SECURITY: 'false',
+                                      RUN_TAG_SOURCE_CODE: 'false',
+                                      RUN_PROMOTE_ARTIFACT: 'false',
+                                      RUN_ARCHIVE_ARTIFACT: 'false',
+                                      RUN_PACKAGE_FOR_DELIVERY: 'false',
+                                      VCVARS_BATCH_FILE: 'DUMMY_FILE']
+
+               def initialParamsMap = deepClone(failedParamsMap)
+
+               // Default values for required parameters
+               def defaultValuesMap = [PREBUILD_TOOL: 'cmake',
+                                       BUILD_TOOL: "setuptools",
+                                       FPGA_COMPILE_TOOL: 'quartus',
+                                       FPGA_COMPILE_TCL_FILE: 'DUMMY_FILE',
+                                       CREATE_INSTALLER_CHOICE: 'cpack',
+                                       UNIT_TEST_CHOICE: "junit",
+                                       STATIC_CODE_ANALYSIS_CHOICE: "spotbugs",
+                                       FPGA_LINT_CHOICE: 'ascent',
+                                       FPGA_LINT_DIRECTORY: 'DUMMY_DIRECTORY',
+                                       FPGA_LINT_SCRIPT_FILE: 'DUMMY_FILE',
+                                       FPGA_VERIFY_CDC_CHOICE: 'meridian',
+                                       FPGA_VERIFY_CDC_DIRECTORY: 'DUMMY_DIRECTORY',
+                                       FPGA_VERIFY_CDC_SCRIPT_FILE: 'DUMMY_FILE',
+                                       PRJ_FILE: 'DUMMY_FILE',
+                                       CODE_COVERAGE_CHOICE: "opencover",
+                                       STYLE_CHECK_CHOICE: 'stylecop',
+                                       ARTIFACT_MANAGEMENT_CHOICE: "generic",
+                                       ARTIFACT_LOCATION: "DUMMY_LOCATION",
+                                       ARTIFACTORY_URL: "DUMMY_URL",   // Deprecated (backwards compatibility)
+                                       ARTIFACT_URL: "DUMMY_URL",
+                                       ARTIFACT_MANAGEMENT_TOOL_URL: "DUMMY_URL",
+                                       VERSION_NUMBER: "DUMMY_1.0.0",
+                                       TESTEXECUTE_PROJECT_SUITE_FILE: "DUMMY_FILE",
+                                       YAML_FILE: 'DUMMY_FILE',
+                                       CMAKE_LISTS_PATH: 'DUMMY_LOCATION',
+                                       PACKAGE_NAME: 'DUMMY_FILE',
+                                       PACKAGE_INSTALL_PATH: "DUMMY_LOCATION",
+                                       INSTALLER_CONFIG_FILE: "DUMMY_FILE",
+                                       TESTEXECUTE_PROJECT_SUITE_FILE: "DUMMY_FILE",
+                                       ARTIFACT_DEST_FOLDER: 'DUMMY_DIRECTORY',
+                                       RELEASE_TAG: 'DUMMY_TAG',
+                                       PATH_TO_ARTIFACT_TO_PROMOTE: 'DUMMY_LOCATION',
+                                       PATH_TO_ARCHIVE_REPOSITORY: 'DUMMY_LOCATION',
+                                       PATTERN_TO_KEEP: 'DUMMY_PATTERN',
+                                       VCVARS_ARCH: 'x64',
+                                       CPACK_GENERATOR: 'archive']
+
+               // Set values for optional parameters
+               def optionalParamsMap = [RUN_PREBUILD: "true", USE_PRJ_TOOL: "true"]
+
+               boolean success = false
+               def returnedMap = [:]
+               def failedBadValuesMap = [:]
+               int addedBadValueCount = 0
+               boolean ranWithAllStagesFalse = false
+               while (!success)
+               {
+                  def FAILURE_CAUSE
+                  try
+                  {
+                     returnedMap = [:]
+                     failedParamsMap.each { key, val ->
+                        returnedMap[key] = val
+                     }
+                     // Setup current pipeline parameters to check for validation errors
+                     jenkinsEnvironment.setupVariables(returnedMap)
+                     jenkinsEnvironment.getStageData().clear()
+                  }
+                  catch(err)
+                  {
+                     FAILURE_CAUSE = err.getMessage()
+                  }
+
+                  success = (FAILURE_CAUSE == null)
+                  if (!success)
+                  {
+                     // attempt to pull failed parameter out of error message
+                     echo "Encountered the following error attempting to run test pipeline: ${FAILURE_CAUSE}"
+                     def paramName = getNameFromParamError(FAILURE_CAUSE)
+                     if (paramName)
+                     {
+                        // First, try to pull from the defaultValuesMap
+                        def defaultValue = defaultValuesMap[paramName]
+                        if (!defaultValue?.contains("DUMMY_") && !failedParamsMap.containsKey(paramName))
+                        {
+                           // If this is the first time paramName was seen, put in a bad value to test value validation
+                           defaultValue += "_ThisIsDefinitelyNOTaValidValue_I_PROMISE"
+                           failedBadValuesMap[paramName] = defaultValue
+                           addedBadValueCount++
+                        }
+                        else
+                        {
+                           // A bad value was tried and failed already, remove the bad value
+                           if (failedBadValuesMap.containsKey(paramName))
+                           {
+                              failedBadValuesMap.remove(paramName)
+                           }
+                           else
+                           {
+                              echo "WARNING: The parameter ${paramName} failed validation of its value, but it was not found in the failedBadValues map"
+                           }
+                        }
+                        if (defaultValue == null)
+                        {
+                           // check if this was a "choice" parameter and pull a value out as a default
+                           def valueList = getListFromParamError(FAILURE_CAUSE)
+                           if (valueList)
+                           {
+                              // just use the first value of the list as the default
+                              defaultValue = valueList[0]
+                           }
+                           else
+                           {
+                              defaultValue = "DUMMY_VALUE"
+                           }
+                        }
+                        
+                        // add this param to the map for the next iteration
+                        // but randomize case to verify case insensitivity
+                        // And because Random operations are not permitted for some insane reason, fake random...
+                        int someDigit = getRandom()
+                        defaultValue = someDigit < 5 ? defaultValue.toLowerCase() : defaultValue.toUpperCase()
+                        echo "Adding value of '${defaultValue}' to failed params map @ key '${paramName}'"
+                        failedParamsMap[paramName] = defaultValue
+
+                        // after validating CPACK_GENERATOR, set CREATE_INSTALLER_CHOICE to 'debian'
+                        // so it can be used at validating PACKAGE_INSTALL_PATH and INSTALLER_CONFIG_FILE
+                        if ((paramName.toUpperCase() == 'CPACK_GENERATOR') && (defaultValue.toUpperCase() == 'ARCHIVE'))
+                        {
+                           defaultValuesMap.CREATE_INSTALLER_CHOICE = 'DEBIAN'
+                           failedParamsMap.CREATE_INSTALLER_CHOICE = 'debian'
+                     }
+                     }
+                  }
+                  else if (!ranWithAllStagesFalse)
+                  {
+                     echo "Handling first success"
+                     // The first success should be with all stages set to false, so set to true and try again
+                     def runStagesKeys = failedParamsMap.keySet().findAll { it =~ /^RUN_.+$/ }
+                     runStagesKeys.each { key ->
+                        failedParamsMap[key] = 'true'
+                     }
+
+                     //TODO Remove once Static Application Security Testing is available
+                     failedParamsMap.RUN_STATIC_APPLICATION_SECURITY = 'false'
+
+                     optionalParamsMap.each {failedParamsMap[it.key] = it.value}
+                     ranWithAllStagesFalse = true
+                     success = false
+                  }
+               }
+
+               // Verify required parameters failed and got added to the map (set difference)
+               def unfailedRequiredKeys = defaultValuesMap.keySet() - failedParamsMap.keySet()
+               unfailedRequiredKeys -= optionalParamsMap.keySet()
+               if (failedParamsMap?.keySet().contains("ARTIFACT_URL"))
+               {
+                  // handle deprecated key
+                  unfailedRequiredKeys -= "ARTIFACTORY_URL"
+               }
+               if (unfailedRequiredKeys)
+               {
+                  def detailString = "   Required default values missing from parameter map: \n"
+                  unfailedRequiredKeys.each { detailString += "      ${it}\n" }
+                  
+                  error("Required parameter values that were left empty did not fail as expected\n${detailString}")
+               }
+               else
+               {
+                  println "PASS: Required parameters that were left empty failed as expected"
+               }
+
+               //Verify bad values failed
+               if (failedBadValuesMap)
+               {
+                  def detailString = ""
+                  failedBadValuesMap.each { detailString += "   ${it.key}: ${it.value}\n" }
+                  error("Bad values were given to parameters that did not fail validation: \n${detailString}")
+               }
+               else
+               {
+                  if (addedBadValueCount == 0)
+                  {
+                     error("Bad values for parameters were never passed into the parameters map to be tested")
+                  }
+                  else
+                  {
+                     println "PASS: Parameters assigned bad values failed as expected"
+                  }
+
+               }
+
+               // Verify other parameters were given default values
+               def otherAddedParameters = returnedMap.findAll { 
+
+                  !it.key.contains('RUN_') && 
+                  !defaultValuesMap.keySet().contains(it.key)
+               }
+
+               def nonNullParameters = otherAddedParameters.findAll { it.value != null && it.value != "INVALID" }
+               if (!nonNullParameters)
+               {
+                  error("No default values were provided for unspecified parameters")
+               }
+               else
+               {
+                  def detailString = ""
+                  nonNullParameters.each { detailString += "   ${it.key}: ${it.value}\n" }
+                  println "PASS: The following default parameters were provided: \n${detailString}"
+               }
+
+               // Verify pipeline ran with all stages set to false
+               if (!ranWithAllStagesFalse)
+               {
+                  error("The pipeline did not successfully run with all stages set to false")
+               }
+               else
+               {
+                  println "PASS: The pipeline successfully ran with all stages set to false"
+               }
+               
+               // Verify parameters are output to the log
+               initialParamsMap.VCVARS_BATCH_FILE = ''
+               initialParamsMap["JENKINS_AGENT"] = getAgentMap()['DEBIAN']
+               def version = getToolVersion("https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/make.git", 'make', getToolVersionsMap())
+               def runWrapper = buildWithParams(initialParamsMap, 'make', version, env.PIPELINE_VERSION, getAdditionalJobParams('make'))
+               def logPath = runWrapper.getAbsoluteUrl()
+               logPath = logPath.substring(logPath.indexOf('job'))
+               logPath = logPath.replaceAll(/job\//, 'jobs/')
+               logPath = logPath.replaceFirst(/\/([0-9]+)\/$/, '/builds/$1')
+               def missingParametersDetails = ""
+               node(label: 'master') {
+                  initialParamsMap.each { key, val ->
+                  logPath = logPath.replaceAll('%20', ' ')
+                     // Double number of backslashes for grep command
+                     val = val.replaceAll('\\\\', "\\\\\\\\")
+                     def result = sh script: "grep -qi '${key} = ${val}' \"\$JENKINS_HOME/${logPath}/log\"", returnStatus: true
+                     if (result != 0)
+                     {
+                        missingParametersDetails += "   ${key} = ${val}\n"
+                     }
+               }
+               }
+               if (missingParametersDetails)
+               {
+                  error("The following parameters were set for the build but not printed in the log: \n${missingParametersDetails}")
+               }
+               else
+               {
+                  println "PASS: all set parameters were printed in the build log"
+               }
+            }
+         }
+      }
+      stage('Test Stages') {
+         when { expression { env.RUN_STAGE_TESTS.toBoolean() } }
+         steps {
+            script {
+
+               // define repositories used by each environment
+               def agentRepos = [DEBIAN:  ['make', 'setuptools', 'maven', 'qmake'],
+                                 UBUNTU:  ['make', 'setuptools', 'maven', 'qmake'],
+                                 CENTOS:  ['make', 'setuptools', 'maven', 'qmake'],
+                                 WINDOWS: ['make', 'msbuild', 'setuptools', 'maven', 'vxworks'],
+                                 UNIX_SC: ['fpga']]
+
+               // List of tools that will NOT be tested in each environemnt
+               def exceptions = [DEBIAN:  [],
+                                 UBUNTU:  [],
+                                 CENTOS:  ['debian', 'debian_pkg'],
+                                 WINDOWS: ['debian', 'debian_pkg', 'cpack'], 
+                                 UNIX_SC: ['debian', 'debian_pkg', 'cpack']]
+
+               // get custom tool version map
+               def toolVerMap = getToolVersionsMap()
+               // Go through environments list and set it up 
+               getAgentMap().each { name, label ->
+                  node(label) {
+                     step([$class: 'WsCleanup'])
+
+                     echo "Running on ${label}"
+                     script {
+                        // Reset workspace for this environment
+                        env.WORKSPACE = pwd()
+                        //Creates empty list for Environmental Variables
+                        def envVarList = []
+                        // Start with all stages set to true and set QMake as prebuild tool
+                        // This will initialize multiple optional parameters for stages
+                        def envParamsMap = [JENKINS_AGENT: 'JENKINS_AGENT',
+                                       RUN_PREBUILD: 'true',
+                                       RUN_BUILD: 'true',
+                                       RUN_CREATE_INSTALLER: 'true',
+                                       RUN_UNIT_TEST: 'true',
+                                       RUN_STATIC_CODE_ANALYSIS: 'true',
+                                       RUN_STATIC_APPLICATION_SECURITY: 'false',
+                                       RUN_CODE_COVERAGE: 'true',
+                                       RUN_STYLE_CHECK: 'true',
+                                       RUN_ARTIFACT_MANAGEMENT: 'true',
+                                       RUN_DEPLOY_ARTIFACTS: 'true',
+                                       RUN_FUNCTIONAL_TEST: 'true',
+                                       RUN_DYNAMIC_APPLICATION_SECURITY: 'true',
+                                       RUN_TAG_SOURCE: 'true',
+                                       RUN_PROMOTE_ARTIFACT: 'false',
+                                       RUN_ARCHIVE_ARTIFACT: 'true',
+                                       RUN_PACKAGE_FOR_DELIVERY: 'true',
+                                       PREBUILD_TOOL: 'qmake',
+                                       PREBUILD_DIRECTORY: 'DOCPF_Prebuild',
+                                       BUILD_TOOL: "setuptools",
+                                       CREATE_INSTALLER_CHOICE: 'debian',
+                                       INSTALLER_CONFIG_FILE: "DUMMY_FILE",
+                                       QMAKE_FILE: 'DUMMY_FILE',
+                                       PACKAGE_NAME: 'DUMMY_FILE',
+                                       YAML_FILE: 'DUMMY_FILE',
+                                       CMAKE_LISTS_PATH: 'DUMMY_LOCATION',
+                                       PACKAGE_INSTALL_PATH: "DUMMY_LOCATION",
+                                       UNIT_TEST_CHOICE: "junit",
+                                       FUNCTIONAL_TEST_CHOICE: "pytest",
+                                       DYNAMIC_APPLICATION_SECURITY_CHOICE: "zap",
+                                       STATIC_CODE_ANALYSIS_CHOICE: "spotbugs",
+                                       CODE_COVERAGE_CHOICE: "opencover",
+                                       STYLE_CHECK_CHOICE: 'stylecop',
+                                       ARTIFACT_MANAGEMENT_CHOICE: "generic",
+                                       ARTIFACT_LOCATION: "DUMMY_LOCATION",
+                                       ARTIFACTORY_URL: "DUMMY_URL",
+                                       ARTIFACT_URL: "DUMMY_URL",
+                                       VERSION_NUMBER: "1.0.0",
+                                       ARTIFACT_MANAGEMENT_TOOL: 'artifactory',
+                                       ARCHIVE_MODE: 'model',
+                                       ARCHIVE_CHOICE: 'name',
+                                       PATH_TO_ARCHIVE_REPOSITORY: 'devops_factory_generic/Archive_Test',
+                                       PATTERN_TO_KEEP: '(.*)_r',
+                                       TESTEXECUTE_PROJECT_SUITE_FILE: "DUMMY_FILE",
+                                       ARTIFACT_DEST_FOLDER: "DUMMY_DIRECTORY",
+                                       CPACK_GENERATOR: 'archive']
+                        
+                        // Initial parameter map depends if FPGA agent will be used or not
+                        if (name == 'UNIX_SC') 
+                        {  
+                           
+                           def unixParamsMap = [RUN_FPGA_COMPILE: 'true',
+                                                FPGA_COMPILE_TOOL: 'quartus',
+                                                RUN_FPGA_LINT: 'true',
+                                                FPGA_LINT_CHOICE: 'ascent',
+                                                RUN_FPGA_VERIFY_CDC: 'true',
+                                                FPGA_VERIFY_CDC_CHOICE: 'meridian',
+                                                PRJ_FILE: 'docpf.fpga.sample',
+                                                FPGA_LINT_DIRECTORY: 'quartus/lint',
+                                                FPGA_COMPILE_TCL_FILE: 'vivado/DocpfVivadoSample.tcl',
+                                                FPGA_LINT_SCRIPT_FILE: 'ascent_lint.ctl',
+                                                FPGA_VERIFY_CDC_DIRECTORY: 'quartus/cdc',
+                                                FPGA_VERIFY_CDC_SCRIPT_FILE: 'meridian_cdc.ctl']
+
+                           // Set all run parameters to false
+                           envParamsMap.keySet().each { 
+                              if(it.contains('RUN_'))
+                              {
+                                 envParamsMap[it] = 'false'
+                              }
+                           }
+                           
+                           // Change values in parameter map to run fpga tools
+                           unixParamsMap.each { param, value ->
+                              envParamsMap[param] = value 
+                           }
+                           
+                        }
+
+                        jenkinsEnvironment.setupVariables(envParamsMap)
+
+                        // Pull repos for this environment into separate directories
+                        agentRepos[name].each { repos ->
+                           dir(repos) {
+                              // Get code from approapriate version of all tool repos
+                              def gitUrl = "https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/${repos}.git"
+                              checkoutBranch(gitUrl, repos, toolVerMap)
+                           }
+                        }
+
+                        // Get map with valid tools that will be tested
+                        def validStages = deepClone(jenkinsEnvironment.getValidStageMap())
+
+                        // Add an msbuild tool alias to use on the make repo
+                        if (name == 'WINDOWS')
+                        {
+                           validStages['VALID_BUILD_TOOLS'].add('msbuild_cpp')
+                        }
+
+                        // Iterate through enabled stages. Simulating runPipeline
+                        jenkinsEnvironment.getStageData().each { stageName, stageValue ->
+                           
+                           def stageObject = stageValue.stageObject
+
+                           // Check stage is enabled in stageMap and in STAGES_TO_TEST parameter
+                           if (stageValue.enabled) {
+
+                              // If testing the build stage, test prebuild tools first
+                              if (stageValue.initialStageDataKey == 'BUILD')
+                              {  
+                                 echo "Running PREBUILD tools"
+                                 stageParamName = 'VALID_PREBUILD_TOOLS'
+                                 validStages[stageParamName].each { toolName ->
+
+                                    if (!exceptions[name].contains(toolName)) 
+                                    {
+                                       echo "Testing ${toolName} on ${label}"
+                                       envParamsMap = setParametersForTool(envParamsMap, toolName)
+
+                                       dir(envParamsMap.PROJECT_ROOT) {
+                                          // Try to execute the tool code and catch any environment compatibility errors
+                                          try {
+                                             preBuildSourceCode(envParamsMap)
+                                          } catch(hudson.AbortException e) {
+                                             echo "${e}"
+                                          }
+                                       }
+
+                                       // Add QMake_make to build tool options
+                                       if (toolName == 'qmake') 
+                                       {
+                                          validStages["VALID_${stageValue.initialStageDataKey}_TOOLS"] += 'qmake_make'
+                                       }
+                                    }
+                                 }
+                                 envParamsMap['RUN_PREBUILD'] = 'false'
+                              }
+                              
+                              echo "Running ${stageValue.initialStageDataKey} tools"
+
+                           //Get names for valid tool lists that do not follow VALID_*_TOOLS format
+                           if (stageValue.initialStageDataKey == 'TAG_SOURCE_CODE')
+                           {
+                              stageParamName = 'VALID_SOURCE_CODE_TOOLS'
+                           }
+                           else if (stageValue.initialStageDataKey == 'PROMOTE_ARTIFACT' || stageValue.initialStageDataKey == 'ARCHIVE_ARTIFACT')
+                           {
+                              stageParamName = 'VALID_RELEASE_ARTIFACT_MANAGEMENT_TOOLS'   
+                           }
+                           else if (stageValue.initialStageDataKey == 'PACKAGE_FOR_DELIVERY')
+                           {  
+                              // Packaging stage does not have a set of valid tools
+                              // Create a valid tools list so stage is run as a single tool
+                              stageParamName = 'PACKAGE_FOR_DELIVERY_TOOLS'
+                              validStages[stageParamName] = ['package']
+                           }
+                           else 
+                           {
+                              // Construct string from stage name and set parameters for stage to execute
+                              stageParamName = "VALID_${stageValue.initialStageDataKey}_TOOLS"
+                           }
+
+                              if (validStages[stageParamName])
+                              {
+                                 validStages[stageParamName].each { toolName ->
+                                    if (toolName == 'debian' && stageValue.initialStageDataKey == 'CREATE_INSTALLER')
+                                    {
+                                       toolName = 'debian_pkg'
+                                    }
+                                    // Use separate set of parameters when running artifact management on windows
+                                    if (name == 'WINDOWS' && toolName == 'generic')
+                                    {
+                                       toolName = 'generic_windows'
+                                    }
+                                    // Use separate set of parameters when when running googletest on linux
+                                    if (name != 'WINDOWS' && toolName == 'googletest') {
+                                       toolName = 'googletest_linux'
+                                    }
+
+                                    envParamsMap = setParametersForTool(envParamsMap, toolName)
+                                    
+                                    if (toolName == 'cpack') {
+                                        envParamsMap.PREBUILD_DIRECTORY = "${env.WORKSPACE}/${envParamsMap.PREBUILD_DIRECTORY}"
+                                    }
+
+                                    if (toolName == 'package') {
+                                        envVarList.add("PACKAGE_ARCHIVE_TYPE=tgz")
+                                    }
+                                    
+                                    // Check tool is not an exception for this environment
+                                    if (!exceptions[name].contains(toolName)) 
+                                    {
+                                       echo "Testing ${toolName} on ${label}"
+                                       // Try to execute the tool code and catch any environment compatibility errors
+                                       dir(envParamsMap.PROJECT_ROOT) {
+                                          envParamsMap.PROJECT_ROOT = '.'
+                                          try {
+                                             
+                                             // Change workspace if MSBuild is being tested
+                                             def workspacePath = env.WORKSPACE
+                                             if (!isUnix()) 
+                                             {
+                                                if (['msbuild'].contains(toolName))
+                                                {
+                                                   env.WORKSPACE = "${env.WORKSPACE}\\msbuild"
+                                                }
+                                                else if (['msbuild_cpp'].contains(toolName))
+                                                {
+                                                   env.WORKSPACE = "${env.WORKSPACE}\\make"
+                                                }
+                                             }
+                                             withEnv(envVarList) {
+                                                stageObject.doMainStageProcessing(envParamsMap)
+                                             }
+                                             env.WORKSPACE = workspacePath
+                                          } catch(Exception e) {
+                                             echo "${e}"
+                                             if (!e.toString().contains(constants.INCOMPATIBLE_ENVIRONMENT_ERROR) && !e.toString().contains(constants.UNSUPPORTED_ENVIRONMENT_ERROR))
+                                             {
+                                                error "Unhandled exception when running ${toolName}"
+                                             }
+                                          }
+                                       }
+                                    }
+                                 }
+                              }
+                              else 
+                              {  
+                                 envParamsMap = setParametersForTool(envParamsMap, stageValue.initialStageDataKey?.toLowerCase())
+
+                                 dir(envParamsMap.PROJECT_ROOT) {
+                                    envParamsMap.PROJECT_ROOT = '.'
+                                    try {
+                                       // Run stage with current map                   
+                                       stageObject.doMainStageProcessing(envParamsMap)                     
+                                    } catch(Exception e) {
+
+                                       echo "${e}"
+
+                                       if (!e.toString().contains(constants.INCOMPATIBLE_ENVIRONMENT_ERROR) && !e.toString().contains(constants.UNSUPPORTED_ENVIRONMENT_ERROR))
+                                       {
+                                          error "Unhandled exception when running ${stageValue.initialStageDataKey}"
+                                       }
+                                    }
+                                 }
+                              }
+                           }
+                        }
+                     }
+                     // Clear stage data for this agent
+                     jenkinsEnvironment.getStageData().clear()
+                  }
+               }
+            }
+         }
+      }
+      stage('Test Environments') {
+         when { expression { env.RUN_ENVIRONMENT_TESTS.toBoolean() } }
+         steps {
+            script {
+               // TODO - the following items should be removed once implemented on the other environment
+               // VxWorks (DOJ-239)
+               def exceptionsMap = [MSBUILD: 'WINDOWS',
+                                    VXWORKS: 'WINDOWS',
+                                    MAKE: ['DEBIAN', 'UBUNTU', 'CENTOS'],
+                                    CMAKE: ['DEBIAN', 'UBUNTU', 'CENTOS'],
+                                    QMAKE: ['DEBIAN', 'UBUNTU', 'CENTOS'],
+                                    MAVEN: ['DEBIAN', 'UBUNTU', 'CENTOS', 'WINDOWS'],
+                                    GRADLE: ['DEBIAN', 'UBUNTU', 'CENTOS', 'WINDOWS'],
+                                    SETUPTOOLS: ['DEBIAN', 'UBUNTU', 'CENTOS', 'WINDOWS'],
+                                    DEBIAN: ['DEBIAN', 'UBUNTU'],
+                                    QUARTUS: 'UNIX_SC',
+                                    VIVADO: 'UNIX_SC',
+                                    MSBUILD_CPP: 'WINDOWS',
+                                    RELEASE: ['DEBIAN', 'UBUNTU', 'CENTOS', 'WINDOWS']]
+
+                  // Initial map of parameters that will be overriden
+                  def overrideParamMap = [JENKINS_AGENT: 'JENKINS_AGENT',
+                                          PATH_TO_ARTIFACT_TO_PROMOTE: '',
+                                          RELEASE_TAG: '',
+                                          DISPLAY_NAME: '']
+
+                  // Map that pairs tools to repos where repos don't match tool names
+                  def toolRepo = [RELEASE: 'setuptools',
+                                 MSBUILD_CPP: 'make',
+                                 QUARTUS: 'fpga',
+                                 VIVADO: 'fpga',
+                                 DEBIAN: 'make',
+                                 CMAKE: 'make',
+                                 GRADLE: 'maven']
+
+                  // get custom tool version map
+                  def toolVerMap = getToolVersionsMap()
+
+                  def paramSampleJobsToTest = env.SAMPLE_JOBS_TO_TEST?.split(/ *, */)
+                  def valueList = paramSampleJobsToTest
+               def paramName = 'BUILD_TOOL'
+               
+                  if ((!valueList || valueList == ['']) || params["EXCLUDE_SAMPLE_JOBS_TO_TEST"])
+               {
+                     // get initial list of jobs from build and fpga tools
+                     valueList = deepClone(jenkinsEnvironment.getValidStageMap()['VALID_BUILD_TOOLS'])
+                     valueList += deepClone(jenkinsEnvironment.getValidStageMap()['VALID_PREBUILD_TOOLS'])
+                     valueList += deepClone(jenkinsEnvironment.getValidStageMap()['VALID_FPGA_COMPILE_TOOLS'])
+
+                  if (valueList?.findAll{ it == 'make'})
+                  {
+                     valueList += 'debian'
+                  }
+                     
+                     if (valueList?.findAll{ it == 'cmake'})
+                     {
+                        valueList -= 'nuget'
+                     }
+
+                  if (valueList?.findAll{ it == 'setuptools'})
+                  {
+                     valueList += 'release'
+                  }
+
+               if (valueList?.findAll{ it == 'msbuild' })
+               {
+                   valueList += 'msbuild_cpp'
+               }
+                  }
+
+                  // If SAMPLE_JOBS_TO_TEST is selected for exclusion, take out those jobs before proceeding
+                  if (params["EXCLUDE_SAMPLE_JOBS_TO_TEST"])
+                  {
+                     paramSampleJobsToTest.each { jobToExclude ->
+                        echo "Excluding the ${jobToExclude} job from this run"
+                        valueList -= jobToExclude
+                     }
+                  }
+                  
+               // Check to make sure the setuptools job will be run before the release job.
+               // This is required since release will promote the artifact created by setuptools.
+               if (valueList?.findAll{ it == 'release' })
+               {
+                  // If release will be run but setuptools will not be run, throw an error
+                  if (!(valueList?.findAll{ it == 'setuptools' }))
+                  {
+                     error("Specified sample jobs do not include setuptools. The setuptools job must run be run before the release job.")
+                  }
+                  else
+                  {
+                     def releaseIndex
+                     def setuptoolsIndex
+                     valueList.eachWithIndex { myvalue, myindex ->
+                        if (myvalue == 'release')
+                        {
+                           releaseIndex = myindex
+                        }
+                        if (myvalue == 'setuptools')
+                        {
+                           setuptoolsIndex = myindex
+                        }
+                     }
+                     // If release will be run prior to setuptools, throw an error
+                     if (releaseIndex < setuptoolsIndex)
+                     {
+                        error("Specified sample jobs are in the wrong order. The setuptools job must be run before the release job.")
+                     }
+                  }
+               }
+
+               // These lists will be used to pass artifact info from setuptools to release
+               def SETUPTOOLS_BUILD_NUMBER = []
+                  def SETUPTOOLS_VERSION_NUMBER = '1.0.0'
+
+               if (valueList)
+               {
+                  // iterate through the tool list
+                  valueList.each { buildTool ->
+                     def environmentList = agentMap.keySet() as List
+                     def repo = buildTool
+                     // Check if repo is not the same as tool name
+                     if (toolRepo[buildTool.toUpperCase()])
+                     {
+                        repo = toolRepo[buildTool.toUpperCase()]
+                     }
+
+                     def gitUrl = "https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/${repo}.git"
+
+                     // Check if tool does not require 
+                     if (exceptionsMap.containsKey(buildTool.toUpperCase()))
+                     {  
+                        // Check if job has exceptions and use the map
+                        if (exceptionsMap[buildTool.toUpperCase()] instanceof List) 
+                        {
+                           environmentList = exceptionsMap[buildTool.toUpperCase()]
+                           }
+                        else 
+                        {
+                           environmentList = [exceptionsMap[buildTool.toUpperCase()]]
+                        }
+                     }
+                     
+                     def version = getToolVersion(gitUrl, buildTool, toolVerMap)
+
+                     // run on each applicable environment
+                     environmentList.each { environment ->
+                        // cmake is a PREBUILD_TOOL so update paramName so print statement will be accurate
+                        if (buildTool == 'cmake')
+                        {
+                           paramName = 'PREBUILD_TOOL'
+                        }
+                        else
+                        {
+                           paramName = 'BUILD_TOOL'
+                        }
+
+                        println "Running on ${environment} with ${paramName} set to '${buildTool}' version ${version}"
+
+                        //Generate case of RUN_* variables randomly to test case insensitivity
+                        overrideParamMap.each { key, val ->
+                           int random = getRandom()
+                           if (random < 5) {
+                              overrideParamMap[key] = overrideParamMap[key]?.toUpperCase()
+                           }
+                           else {
+                              overrideParamMap[key] = overrideParamMap[key]?.toLowerCase()
+                           }
+                        }
+
+                        overrideParamMap["JENKINS_AGENT"] = getAgentMap()[environment]
+
+                        // Modify parameters before sending to downstream release job
+                        if (buildTool == 'release')
+                        {
+                           // get the version number and build number for this specific release job to promote the artifact
+                           def thisjob_SETUPTOOLS_VERSION_NUMBER = SETUPTOOLS_VERSION_NUMBER
+                           def thisjob_SETUPTOOLS_BUILD_NUMBER = SETUPTOOLS_BUILD_NUMBER.remove(0)
+
+                           // release job will run against artifact path from a recent setuptools job run
+                           overrideParamMap["PATH_TO_ARTIFACT_TO_PROMOTE"] = "devops_factory_pypi/devopspkg/${thisjob_SETUPTOOLS_VERSION_NUMBER}a${thisjob_SETUPTOOLS_BUILD_NUMBER}"
+
+                           // release job will run against the entire directory so need to set an empty file name
+                           overrideParamMap["FILE_NAME_OF_ARTIFACT_TO_PROMOTE"] = ''
+                           
+                           // release job will show which files it would archive if ARCHIVE_MODE is set to archive
+                              overrideParamMap["ARCHIVE_MODE"] = "archive"
+                           
+                           // release job will archive by name
+                           overrideParamMap["ARCHIVE_CHOICE"] = "name"
+                           
+                           // release job will keep files based on this pattern
+                              overrideParamMap["PATTERN_TO_KEEP"] = "^(?!.*_r).*\$"
+                           //Using matcher to retrieve the VLE and the port which will be used in the TAG
+                           def searchURLPattern = ~/^https?:\/\/([^\.:]+).*:([0-9]+).*$/
+                           def matcherResults = searchURLPattern.matcher("${env.JENKINS_URL}")
+                           // release job will use a tag with the VLE, port and build number appended to it
+                           overrideParamMap["RELEASE_TAG"] = "TEST_TAG_${matcherResults.getAt(0)[1].toUpperCase()}_${matcherResults.getAt(0)[2]}_${thisjob_SETUPTOOLS_BUILD_NUMBER}"
+                        }
+
+                        // Set the name for the downstream job
+                        def envShortName
+                        
+                        switch(environment)
+                        {
+                           case 'WINDOWS':
+                              envShortName = 'WIN'
+                              break
+                           case 'DEBIAN':
+                              envShortName = 'DEB'
+                              break
+                           case 'UBUNTU':
+                              envShortName = 'UBU'
+                              break
+                           case 'CENTOS':
+                              envShortName = 'CENT'
+                              break
+                           case 'UNIX_SC':
+                              envShortName = 'SC'
+                              break
+                        }                           
+                        overrideParamMap['DISPLAY_NAME'] = envShortName
+
+                        def runWrapper = buildWithParams(overrideParamMap, buildTool, version, env.PIPELINE_VERSION, getAdditionalJobParams(buildTool))
+
+                        // Get build number to get setuptools artifacts in release job
+                        if (buildTool == 'setuptools')
+                        {
+                           
+                           def buildNumber = runWrapper.getDisplayName() - "${envShortName}#"
+                           SETUPTOOLS_BUILD_NUMBER += buildNumber
+                        }
+                        
+                        if (buildTool == 'release')
+                        {
+                           // Delete the test tag created during the release job
+                           deleteTestTag(gitUrl, "${overrideParamMap.RELEASE_TAG}")
+                        }
+                        if (runWrapper.getCurrentResult() == 'FAILURE')
+                        {
+                           error("Build stage failed for tool ${buildTool} on ${environment}")
+                        }
+                     }
+                  }
+               }
+            }
+         }
+      }
+   }
+   post{
+      always{
+         step([$class: 'WsCleanup'])
+      }
+   }
+}

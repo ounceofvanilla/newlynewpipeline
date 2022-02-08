@@ -1,0 +1,13 @@
+#
+deb http://deb.debian.org/debian buster contrib non-free
+#
+deb http://deb.debian.org/debian buster-updates contrib non-free
+#
+deb http://deb.debian.org/debian stretch main contrib non-free
+#
+deb http://deb.debian.org/debian stretch-updates main contrib non-free
+#
+deb http://deb.debian.org/debian jessie main contrib non-free
+#
+deb http://deb.debian.org/debian jessie-updates main contrib non-free
+#

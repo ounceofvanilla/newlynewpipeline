@@ -1,0 +1,12 @@
+  - name: Create destination directory
+    file:
+      path: "{{ PIPELINE_PARAMS_DEST_FOLDER }}"
+      state: directory
+
+  - name: Download artifact to designated location
+    get_url:
+      url           : "{{ PIPELINE_PARAMS_ARTIFACT_URL }}/{{ PIPELINE_PARAMS_SOURCE_PATH }}"
+      dest          : "{{ PIPELINE_PARAMS_DEST_FOLDER }}"
+      username      : "{{ artifact_repo_un }}"
+      password      : "{{ artifact_repo_pw }}"
+      validate_certs: no

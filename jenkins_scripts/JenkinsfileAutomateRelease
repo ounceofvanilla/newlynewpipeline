@@ -1,0 +1,69 @@
+stage('Load Shared Library'){
+	try {
+		library identifier: "devops-pipelines_branch@${env.PIPELINE_VERSION}",
+			retriever: modernSCM(
+				[
+					$class: 'GitSCMSource',
+					remote: 'https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/devops-pipelines.git',
+				]
+			)
+	} catch(Exception e) {
+		echo "WARNING - tried to load shared pipeline library version: ${env.PIPELINE_VERSION}, but branch/tag does not exist in library repo. Using master instead."
+		library identifier: "devops-pipelines@master",
+			retriever: modernSCM(
+				[
+					$class: 'GitSCMSource', 
+					remote: 'https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/devops-pipelines.git',
+				]
+			)
+		}
+	} 
+	
+	runPipeline(
+		//machine that the jenkins pipeline will run on. required
+		JENKINS_AGENT: 'DOCKER_RELEASE_AGENT',
+		//properties file containing the list of stages to run
+		STAGE_PROPERTIES_FILE: 'resources/stageData.properties',
+		//if you want to run mergeBranch which will merge two Branches together. optional. recommended value is 'true'. Must be String value.
+		RUN_MERGE_BRANCH: 'true',
+		//if you want to run tag source code stage which will create a tag and push it on the latest commit.
+		RUN_TAG_SOURCE_CODE: 'true',
+		//Tag value used in the tag source code stage.
+		RELEASE_TAG: 'TEST',
+		//source code options: bitbucket.  required
+		SOURCE_CODE_TOOL: 'bitbucket',
+	
+		//Docker Specific Parameters
+		//if you want to run dockerImageBuild which will build the image. optional. recommended value is 'true'. Must be String value.
+		RUN_DOCKER_IMAGE_BUILD: 'true',
+		//if you want to run dockerImagePush which will push the built image. optional. recommended value is 'true' only if RUN_DOCKER_IMAGE_BUILD is 'true'. Must be String value.
+		RUN_DOCKER_IMAGE_PUSH: 'true',
+		//Registry URL
+		REGISTRY_URL: 'https://lnvle1865.gs.myharris.net:5000',
+		//docker repo branch
+		DOCKER_REPO_BRANCH: "${DOCKER_REPO_BRANCH}",
+		//name of the docker image
+		DOCKER_IMAGE: "${IMAGE_NAME}",
+		//source code directory.
+		SOURCE_CODE_DIRECTORY: "${IMAGE_NAME}/docker",
+		//Docker Repository url. Format should be 'host.xz:port/path/to/repo.git'
+		DOCKER_REPO_URL: 'https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/docker.git',
+		//Push the tagged docker image into the registory if 'true', no push if 'false'. optional. Default to 'false' if the value is not specified. Must be String value.
+		DOCKER_TAG_PUSH: 'true',
+		TAG_LATEST: "${TAG_LATEST}",
+		
+	
+		//if you want to run containerScan which with scan the built image. optional. recommended value it 'true'. Must be String value.
+		RUN_CONTAINER_SCAN: 'true',
+		//container scanning options: trivy. required.
+		CONTAINER_SCAN_CHOICE: 'trivy',
+	
+		//the number of builds to keep for the job on Jenkins. optional. recommended value is '5'
+		NUMBER_BUILDS_TO_KEEP: '15',
+		//the number of artifacts to keep for the job on Jenkins. optional. recommended value is '5'
+		NUMBER_ARTIFACTS_TO_KEEP: '15',
+		//the time to let the pipeline run before timing out. optional. recommended value is '9'
+		TIMEOUT_TIME: 10,
+		//the type of time to let the pipeline run before timing out. optional. recommended value is 'HOURS'
+		TIMEOUT_UNITS: 'HOURS'
+	)

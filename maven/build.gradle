@@ -1,0 +1,7 @@
+apply plugin: 'java'
+
+repositories { jcenter() }
+dependencies {
+    testImplementation 'org.hamcrest:hamcrest:2.2'
+    testImplementation 'junit:junit:4.12'
+}

@@ -1,0 +1,74 @@
+//Script for archiving our artifactory directories (listed in the FOLDERS_TO_ARCHIVE variable)
+//It executes the release job with only ARCHIVE_ARTIFACT stage ON and archives each folder/directory. 
+script{
+   def FOLDERS_TO_ARCHIVE= [
+      'devops_factory_pypi/', 
+      'devops_factory_maven/', 
+      'devops_factory_debian/',
+      'devops_factory_nuget/',
+      'devops_factory_generic/VxWorks/',
+      'devops_factory_generic/MSBuild/',
+      'devops_factory_generic/Make/',
+      'devops_factory_generic/Maven/',
+      'devops_factory_generic/QMake/',
+      'devops_factory_generic/Quartus/',
+      'devops_factory_generic/Selenium/',
+      'devops_factory_generic/Setuptools/',
+      'devops_factory_generic/Vivado/'
+   ]
+   def ARCHIVE_ARTIFACT_JOB= "release"
+   FOLDERS_TO_ARCHIVE.each { folder ->
+      def buildResults = build(job: "${ARCHIVE_ARTIFACT_JOB}",
+            parameters: [
+            [
+               $class: 'StringParameterValue',
+               name: 'PIPELINE_VERSION',
+               value: "${env.PIPELINE_VERSION}"
+            ],
+            [
+               $class: 'GitParameterValue',
+               name: 'GIT_BRANCH',
+               value: "${env.GIT_BRANCH}"
+            ],
+            [
+               $class: 'StringParameterValue',
+               name: 'PATH_TO_ARTIFACT',
+               value: "${folder}"
+            ],
+            [
+               $class: 'StringParameterValue',
+               name: 'PATTERN_TO_KEEP',
+               value: "archive-everything"
+            ],
+            [
+               $class: 'StringParameterValue',
+               name: 'FILE_NAME_OF_ARTIFACT',
+               value: ""
+            ],
+            [
+               $class: 'StringParameterValue',
+               name: 'ARCHIVE_MODE',
+               value: "archive"
+            ],
+            [
+               $class: 'StringParameterValue',
+               name: 'ARCHIVE_CHOICE',
+               value: "name"
+            ],
+            //The OVERRIDE_RUN_PROMOTE_ARTIFACT and the OVERRIDE_RUN_TAG_SOURCE_CODE are needed when 
+            //the stageData.Properties was not modified to ONLY run ARCHIVE_ARTIFACTS
+            [
+               $class: 'StringParameterValue',
+               name: 'OVERRIDE_RUN_PROMOTE_ARTIFACT',
+               value: 'false'
+            ],
+            [
+               $class: 'StringParameterValue',
+               name: 'OVERRIDE_RUN_TAG_SOURCE_CODE',
+               value: 'false'
+            ]
+         ],
+         propagate: false)
+      echo "Archiving ${folder} result: ${buildResults.result}"     
+   }
+}

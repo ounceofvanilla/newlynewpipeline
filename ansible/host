@@ -1,0 +1,8 @@
+#The name within the brackets indicate the name of a group of hosts.  IPs included are only examples and should be changed to fit program system.
+[Example-Ips]
+10.10.10.10
+10.10.10.11
+
+[Group-Name]
+20.20.20.20
+20.20.20.21

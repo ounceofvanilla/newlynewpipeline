@@ -1,0 +1,136 @@
+try {
+	library identifier: "devops-pipelines_branch@${env.PIPELINE_VERSION}",
+	   retriever: modernSCM(
+		  [
+			 $class: 'GitSCMSource',
+			 remote: 'https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/devops-pipelines.git',
+		  ]
+	  )
+ }
+ catch(Exception e) {
+	echo "WARNING - tried to load shared pipeline library version: ${env.PIPELINE_VERSION}, but branch/tag does not exist in library repo. Using master instead."
+	library identifier: "devops-pipelines@master",
+	   retriever: modernSCM(
+		  [
+			 $class: 'GitSCMSource', 
+			 remote: 'https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/devops-pipelines.git',
+		  ]
+	   )
+ }
+ 
+ runPipeline(
+	 //machine that the jenkins pipeline will run on. required
+	 JENKINS_AGENT: 'JENKINS_AGENT',
+ 
+	 //properties file containing the list of stages to run
+	 STAGE_PROPERTIES_FILE: 'resources/debianStageData.properties',
+	 //directory location for program specific pre/post processing. optional. recommended value is ''. 
+	 PROGRAM_SPECIFIC_SCRIPT: 'vars/prePostProcessing.groovy',
+ 
+	 //parameter that controls whether notifications will be sent when the job is completed. Default is 'false'. If 'true', default processing is to 
+	 //send an email to the user that submitted the job, and to any email addresses (comma separated list) in the EMAIL_RECIPIENTS parameter on the job.
+	 SEND_NOTIFICATION: 'true',
+ 
+	 //root of source code. optional. recommended value is '.'
+	 PROJECT_ROOT: '.',
+	 //location of the source code. optional. recommended value is 'src' 
+	 SOURCE_CODE_DIRECTORY: 'src',
+	 //location of the unit test code. optional. recommended value is 'test'   
+	 UNIT_TEST_DIRECTORY: 'test/src',
+ 
+	 //if you want the build tool to run. optional. recommended value is 'true'. Must be String value.
+	 RUN_BUILD: 'true',
+	 //build tool for the project. required. 'setuptools' for python, 'maven' for java, 'make' for c++, 'msbuild' for c#
+	 BUILD_TOOL: 'make',
+	 //name of the makefile. optional. recommended value is ''.
+	 MAKEFILE_NAME: '',
+	 //the makefile target. optional. default value is 'all'.
+	 MAKEFILE_TARGET: 'all',
+	 
+	 //if you want to create a binary installer. recommended value is 'true'. Must be string value
+	 RUN_CREATE_INSTALLER: 'true',
+	 //installer creation options: 'debian'. required. 
+	 CREATE_INSTALLER_CHOICE: 'debian',
+	 //path to debian package configuration file. required. 
+	 INSTALLER_CONFIG_FILE: 'installer/control',
+	 //Name of the package that will be created
+	 PACKAGE_NAME: 'ExampleApp',
+	 //Path used in the debian package to determine the installation path.
+	 PACKAGE_INSTALL_PATH: 'usr/bin',
+ 
+	 //if you want to run unit tests. optional. recommended value is 'true'. Must be String value.
+	 RUN_UNIT_TEST: 'true',
+	 //unit testing framework options: VSTest, GoogleTest, JUnit, pytest, or unittest. required. 
+	 UNIT_TEST_CHOICE: 'GoogleTest',
+ 
+	 //if you want to run static code analysis. optional. recommended value is 'true'. Must be String value.
+	 RUN_STATIC_CODE_ANALYSIS: 'true',
+	 //tool used to perform static code analysis. options: SonarQube, Klocwork, CPPCheck, Pylint, spotbugs. required.
+	 STATIC_CODE_ANALYSIS_CHOICE: 'CPPCheck',
+ 
+	 //If you want to run static application security testing. Optional. Recommended value is 'true'. Must be String value.
+	 RUN_STATIC_APPLICATION_SECURITY: 'false',
+ 
+	 //if you want to run code coverage. optional. recommended value is 'true'. Must be String value.
+	 RUN_CODE_COVERAGE: 'true',
+	 //options: OpenCover, GCov, pytest-cov, coverage. required
+	 CODE_COVERAGE_CHOICE: 'GCov',
+ 
+	 //if you want to run artifact management. optional. recommended value is 'true'. Must be String value.
+	 RUN_ARTIFACT_MANAGEMENT: 'true',
+	 //artifact repository type options: Generic, NuGet, Maven, PyPi, Debian. required
+	 ARTIFACT_MANAGEMENT_CHOICE: 'debian',
+	 //location of the artifact to store in artifact management. required      
+	 ARTIFACT_LOCATION: 'src/exampleapp',
+	 //if set to true it will use the local path of the artifact in the destination (package for debian option)
+	 ARTIFACT_REPLICATE_LOCAL_PATH_FLAG: 'true',
+	 //name of the artifacts to store in artifact management. supports wildcards. optional. recommended value is '*'. If using regex, the ARTIFACT_REGEX_PATTERN_FLAG should be set to true.
+	 ARTIFACT_FILENAME_PATTERN: 'exampleapp',
+	 //location of the artifact management tool. required
+	 ARTIFACT_URL: 'https://lnsvr0310.gcsd.harris.com:8443/artifactory/devops_factory_debian',
+	 //parent directory that the artifact will be stored in on the artifact management tool. optional. recommended value is ''
+	 GROUP_ID: 'Debian',
+	 //subdirectory that the artifact will be stored in on the artifact management tool. optional. recommended value is ''
+	 ARTIFACT_ID: "ExampleApp",
+	 //immediate directory that the artifact will be stored in on the artifact management tool. used for versioning the artifact. optional. recommended value is '1.0.0'
+	 VERSION_NUMBER: '1.0.0',
+	 //if set to false, allows a program to append a build number to the version number. recommended value is 'false'
+	 FORMAL_VERSION: 'false',
+	 //If set to true, this allows adding artifact tagging. Default is false.
+	 APPLY_OPTIONAL_ARTIFACT_MANAGEMENT_PROPERTIES: 'true',
+	 
+	 
+	 //use 'separate' if Ansible repo is separate from source code repo.  Use 'source' if Ansible playbooks are included in source code repo
+	 ANSIBLE_REPO_TYPE: 'source',
+	 //if Ansible playbooks are included in source code repo, use the directory name.  Required if ANSIBLE_REPO_TYPE = 'source'
+	 ANSIBLE_DIRECTORY: 'ansible',
+	 //ansible git repository url. Required if ANSIBLE_REPO_TYPE is set to 'separate'.  Default value set to factory git repository URL.
+	 ANSIBLE_URL: 'https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/ansible.git',
+	 //ansible git repository branch.  Required if DEPLOY_ARTIFACTS is set to 'true'.  Default value set to 'master'
+	 ANSIBLE_BRANCH: 'master',
+	 //name of the Ansible playbook to test artifacts of this particular build type.  Required if using program provided playbooks.  Do not include the .yml file extension.
+	 ANSIBLE_PLAYBOOK_NAME: 'generic',
+	 //pattern to search in artifact management for the artifact to deploy. defaults to the value of ARTIFACT_FILENAME_PATTERN
+	 ARTIFACT_DEPLOYMENT_SEARCH_PATTERN: '.*\\.deb',
+	 //if you want to use a regex filename pattern to search for the artifact to deploy. defaults to the value of ARTIFACT_REGEX_PATTERN_FLAG
+	 ARTIFACT_DEPLOYMENT_SEARCH_REGEX_FLAG: 'true',
+	 //location of the artifact management tool. required if ARTIFACT_DEPLOYMENT_SEARCH_REGEX_FLAG is 'true'
+	 ARTIFACT_MANAGEMENT_TOOL_URL: 'https://lnsvr0310.gcsd.harris.com:8443/artifactory',
+	 // destination folder where artifact will be deployed. required
+	 ARTIFACT_DEST_FOLDER: '.',
+ 
+	 //Location of Yaml file that drives deliverable packaging. Required if using Package for Delivery.
+	 YAML_FILE: 'packaging/debpackage.yml',
+ 
+	 // The number of builds to keep for the job on Jenkins (optional). Will not limit the number of builds kept if blank.
+	 // Note: you may use both NUMBER_BUILDS_TO_KEEP and DAYS_BUILDS_TO_KEEP. If you would not like to use one, just leave it blank.
+	 NUMBER_BUILDS_TO_KEEP: '',
+	 // The number of days' worth of builds to keep for the job on Jenkins (optional). Will not limit the number of days builds are kept if blank.
+	 DAYS_BUILDS_TO_KEEP: '3',  
+	 //the number of artifacts to keep for the job on Jenkins. optional. recommended value is '5'
+	 NUMBER_ARTIFACTS_TO_KEEP: '6',
+	 //the time to let the pipeline run before timing out. optional. recommended value is '9'
+	 TIMEOUT_TIME: 10,
+	 //the type of time to let the pipeline run before timing out. optional. recommended value is 'HOURS'
+	 TIMEOUT_UNITS: 'HOURS'
+ )

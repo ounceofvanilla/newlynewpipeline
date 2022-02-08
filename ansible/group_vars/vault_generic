@@ -1,0 +1,5 @@
+PIPELINE_PARAMS_ARTIFACT_URL : "{{ lookup('env', 'PIPELINE_PARAMS_ARTIFACT_URL') }}"
+PIPELINE_PARAMS_SOURCE_PATH  : "{{ lookup('env', 'PIPELINE_PARAMS_SOURCE_PATH') }}"
+PIPELINE_PARAMS_DEST_FOLDER  : "{{ lookup('env', 'PIPELINE_PARAMS_DEST_FOLDER') }}"
+artifact_repo_un : provided_at_runtime
+artifact_repo_pw : provided_at_runtime

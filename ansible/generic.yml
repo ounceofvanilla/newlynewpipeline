@@ -1,0 +1,7 @@
+- name  : Download and install artifacts
+  hosts : localhost
+  gather_facts: no
+  vars_files:
+    - group_vars/vault_generic
+  roles :
+    - artifact_management

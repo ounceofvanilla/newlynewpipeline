@@ -1,0 +1,152 @@
+pipeline {  
+   agent {label "${JENKINS_NODE}"}
+   stages {
+      stage('Retrieve LOCC tools repo'){
+            steps {
+            script {
+               LOCC_TOOLS="locc_tools"
+               // Clone Repo with LOCC tool
+               dir ("${LOCC_TOOLS}") {
+                  git url: "https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devopspq/locc_tools.git"
+               }
+               LOCC_TOOLS='../' + LOCC_TOOLS
+            }
+         }
+      }
+      stage('Generate SLOC Metrics'){
+            steps {
+            script {
+               SCM_CHOICE = "${env.SCM_CHOICE?.toLowerCase() ?: 'bitbucket'}"
+               // Clone the source code repo and remove any files to be ignored,
+               // then run the LOCC tool and format the report
+               IGNORE_FOLDERS = "${IGNORE_FOLDERS ? '-k ' + IGNORE_FOLDERS: ''}"
+               LANGUAGE_LIST = "${LANGUAGE_LIST ? '-o ' + LANGUAGE_LIST: ''}"
+               IGNORE_REGEX = "${IGNORE_REGEX ? '-X ' + IGNORE_REGEX: ''}"
+               LOCC_OPTIONS = LOCC_OPTIONS.replaceAll(',', ' ')
+               dir ("src") {
+                  switch("${SCM_CHOICE}") {
+                     case 'bitbucket':
+                        sh 'rm -rf *'
+                        git branch: "${BITBUCKET_BRANCH}", credentialsId: "${BITBUCKET_CREDENTIALS}", url: "${BITBUCKET_URL}"
+                        sh """
+                           export PATH=${CUSTOM_PATH}:$PATH
+                           java -jar ${LOCC_TOOLS}/locc.jar ${SOURCE_FOLDERS} ${IGNORE_FOLDERS} ${LANGUAGE_LIST} ${IGNORE_REGEX} ${LOCC_OPTIONS} > locc_results.txt
+                           python ${LOCC_TOOLS}/FormatLocc.py --infile locc_results.txt --outfile locc_results -cloc -dsloc
+                        """
+                        break
+                     case 'clearcase':
+                        BITBUCKET_BRANCH = "${CLEARCASE_VIEW_NAME}"
+                        // Start and mount the ClearCase view
+                        bat """
+                           cleartool startview ${CLEARCASE_VIEW_NAME}
+                           cleartool mount \\${CLEARCASE_VOB_NAME} || exit 0
+                        """
+                        // Copy files from the ClearCase view to a local folder
+                        bat """
+                           set PATH=${CUSTOM_PATH};%PATH%
+                           del /S /F /Q *
+                           (robocopy /E "M:\\${CLEARCASE_VIEW_NAME}\\${CLEARCASE_VOB_NAME}\\${CLEARCASE_VIEW_PATH}" .) ^& IF %ERRORLEVEL% LSS 8 SET ERRORLEVEL = 0
+                        """
+                        // Find private files and delete from source before running SLOC tool
+                        excludeFiles = bat(script: """
+                           @echo off
+                           cleartool ls -r -view_only M:\\${CLEARCASE_VIEW_NAME}\\${CLEARCASE_VOB_NAME}\\${CLEARCASE_VIEW_PATH}
+                        """.stripMargin(), returnStdout: true)
+                        excludeFiles = "${excludeFiles.replaceAll(/M:\\${CLEARCASE_VIEW_NAME}\\${CLEARCASE_VOB_NAME}\\${CLEARCASE_VIEW_PATH}\\?/, '')}"
+                        def excludeFiles = excludeFiles.split('\n')
+                        excludeFiles.each { filePath ->
+                           if (!filePath.contains("Rule: CHECKEDOUT")) {
+                              bat """
+                                 del /F /Q \"${filePath}\"
+                              """
+                           }
+                        }
+                        // Run SLOC tool
+                        bat """
+                           java -jar ${LOCC_TOOLS}/locc.jar ${SOURCE_FOLDERS} ${IGNORE_FOLDERS} ${LANGUAGE_LIST} ${IGNORE_REGEX} ${LOCC_OPTIONS} > locc_results.txt
+                           python ${LOCC_TOOLS}/FormatLocc.py --infile locc_results.txt --outfile locc_results -cloc -dsloc
+                        """
+                        break
+                  default:
+                     error("Invalid SCM_CHOICE provided: ${SCM_CHOICE}")
+                     break
+                  }
+               }
+            }
+         }
+      }
+      stage('Update centralized SLOC Metrics'){
+            steps {
+            script {
+               // Update the centralized metrics if requested.
+               if ("${UPDATE_METRICS}" == 'true') {
+                  withCredentials([usernamePassword(credentialsId: "${CM_USER_CREDENTIALS}", passwordVariable: 'CM_USER_PASSWORD', usernameVariable: 'CM_USER_USERNAME')]) {
+                     dir ("src") {
+                        switch("${SCM_CHOICE}") {
+                           case 'bitbucket':
+                              sh """
+                                 export DSLOC=`tail -1 locc_results.txt | awk '{ print \$3 }'`
+                                 wget "https://swmetrics.harris.com/ac.asmx/ReceiveJSONData" --post-data="xml={'UID':'${PROGRAM_UID}','DSLOC':'\$DSLOC','SvcAccount':'${CM_USER_USERNAME}'}" --no-check-certificate -O /dev/null
+                              """
+                              break
+                           case 'clearcase':
+                              bat """
+                                 for /f "tokens=2-3" %%f in ('find /c /v "" locc_results.txt') do (for %%F in (%%f %%g) do set nbLines=%%F )
+                                 set /a nbSkippedLines=%nbLines%-1
+                                 for /f "usebackq skip=%nbSkippedLines% tokens=1-3,*" %%d in (locc_results.txt) do set DSLOC=%%f
+                                 curl "https://swmetrics.harris.com/ac.asmx/ReceiveJSONData" -k -negotiate --ssl-no-revoke -d "xml={'UID':'${PROGRAM_UID}','DSLOC':'%DSLOC%','SvcAccount':'${CM_USER_USERNAME}'}" -O
+                              """
+                              break
+                        }
+                     }
+                  }  
+               }
+            }
+         }
+      }
+      stage('Publish LOCC results to Jenkins'){
+            steps {
+            script {
+               // Publish results to the Jenkins job
+               archiveArtifacts artifacts: 'src/locc_results.txt', fingerprint: true
+               sloccountPublish encoding: '', pattern: 'src/locc_results.xml'
+            }
+         }
+      }
+   }
+   post{
+      always{
+         script {
+            echo "INFO - Send Job Notification"
+            buildStatus = currentBuild.result ?: 'SUCCESSFUL'
+      
+            // If the EMAIL_RECIPIENTS parameter is specified, use it, otherwise email will just go to Submitter
+            def emailTo 
+            try {
+               if (EMAIL_RECIPIENTS) {
+                  emailTo = EMAIL_RECIPIENTS
+               } 
+            } catch (Exception e) {
+               emailTo = 'Do-Not-Reply@L3Harris.com'
+            }
+
+            // Default values
+            def subject = "${buildStatus}: ${env.JOB_NAME}: LOCC Metrics - ${BITBUCKET_BRANCH}"
+            def summary = "${subject} (${env.BUILD_URL})"
+            def details = """
+            See attached LOCC metrics or review console output at "${env.JOB_NAME} [${env.BUILD_NUMBER}]" 
+            ${BUILD_URL}
+            """
+
+            emailext (
+               attachmentsPattern: 'src/locc_results.*',
+               subject: subject,
+               body: details,
+               recipientProviders: [[$class: 'RequesterRecipientProvider']],
+               to: emailTo
+            )
+         }
+      }
+   }
+}
+

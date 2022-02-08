@@ -1,0 +1,99 @@
+try {
+   library identifier: "devops-pipelines_branch@${env.PIPELINE_VERSION}",
+      retriever: modernSCM(
+         [
+            $class: 'GitSCMSource',
+            remote: 'https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/devops-pipelines.git',
+         ]
+     )
+}
+catch(Exception e) {
+   echo "WARNING - tried to load shared pipeline library version: ${env.PIPELINE_VERSION}, but branch/tag does not exist in library repo. Using master instead."
+   library identifier: "devops-pipelines@master",
+      retriever: modernSCM(
+         [
+            $class: 'GitSCMSource', 
+            remote: 'https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/devops-pipelines.git',
+         ]
+     )
+}
+
+runPipeline(
+    //machine that the jenkins pipeline will run on. required
+    JENKINS_AGENT: 'STD_CLIENT_AGENT',
+
+    //properties file containing the list of stages to run
+    STAGE_PROPERTIES_FILE: 'vivado/resources/stageData.properties',
+
+    //parameter that controls whether notifications will be sent when the job is completed. Default is 'false'. If 'true', default processing is to 
+    //send an email to the user that submitted the job, and to any email addresses (comma separated list) in the EMAIL_RECIPIENTS parameter on the job.
+    SEND_NOTIFICATION: 'true',
+
+    //root of source code. optional. recommended value is '.'
+    PROJECT_ROOT: '.',
+
+    //FPGA design software to compile with, options: Quartus, Vivado. Required. 
+    FPGA_COMPILE_TOOL: 'vivado',
+
+    //Path to Tcl script file used to compile your FPGA design. Relative to PROJECT_ROOT. Required.
+    FPGA_COMPILE_TCL_FILE: 'vivado/DocpfVivadoSample.tcl',
+
+    //FPGA linting tool to verify design with, options: Ascent. Required.
+    FPGA_LINT_CHOICE: 'ascent',
+
+    //Path to the directory where linting project will run. Required.
+    FPGA_LINT_DIRECTORY: 'vivado/lint',
+
+    //Path to the script to run with the linting tool. Relative to FPGA_LINT_DIRECTORY. Required.
+    FPGA_LINT_SCRIPT_FILE: 'ascent_lint.ctl',
+
+    //Path to the expected report file of the linting tool. Optional.
+    FPGA_LINT_REPORT_FILE: 'vivado/lint/ascent_lint_report.txt',
+
+    //Time to wait for linting tool license slot to open. Optional. Set to 0 for no waiting.
+    FPGA_LINT_WAIT_TIME: 5,
+
+    //FPGA clock domain crossing check tool to verify design with, options: Meridian. Required.
+    FPGA_VERIFY_CDC_CHOICE: 'meridian',
+
+    //Path to the directory where CDC verification project will run. Required.
+    FPGA_VERIFY_CDC_DIRECTORY: 'vivado/cdc',
+
+    //Path to the script to run with the CDC verification tool. Relative to FPGA_VERIFY_CDC_DIRECTORY. Required.
+    FPGA_VERIFY_CDC_SCRIPT_FILE: 'meridian_cdc.ctl',
+
+    //Path to the expected report file of the CDC verification tool. Optional.
+    FPGA_VERIFY_CDC_REPORT_FILE: 'vivado/cdc/meridian_cdc_report.txt',
+
+    //Time to wait for CDC verification tool license slot to open. Optional. Set to 0 for no waiting.
+    FPGA_VERIFY_CDC_WAIT_TIME: 5,
+
+    //artifact repository type options: Generic, NuGet, Maven, PyPi. required
+    ARTIFACT_MANAGEMENT_CHOICE: 'generic',
+    //location of the artifact to store in artifact management. required      
+    ARTIFACT_LOCATION: 'vivado/DocpfVivadoSample.runs/impl_1',
+    //name of the artifacts to store in artifact management. supports wildcards. optional. recommended value is '*'
+    ARTIFACT_FILENAME_PATTERN: '*.bit',
+    //location of the artifact management tool. required
+    ARTIFACT_URL: 'https://lnsvr0310.gcsd.harris.com:8443/artifactory/devops_factory_generic',
+    //parent directory that the artifact will be stored in on the artifact management tool. optional. recommended value is ''
+    GROUP_ID: 'Vivado',
+    //subdirectory that the artifact will be stored in on the artifact management tool. optional. recommended value is ''
+    ARTIFACT_ID: 'DocpfVivadoSample',
+    //immediate directory that the artifact will be stored in on the artifact management tool. used for versioning the artifact. optional. recommended value is '1.0.0'
+    VERSION_NUMBER: '1.0.0',
+    //if set to false, allows a program to append a build number to the version number. recommended value is 'false'
+    FORMAL_VERSION: 'false',
+
+    //directory location for program specific pre/post processing. optional. recommended value is ''. 
+    PROGRAM_SPECIFIC_SCRIPT: 'vivado/vars/prePostProcessing.groovy',
+
+    //the number of builds to keep for the job on Jenkins. optional. recommended value is '5'
+    NUMBER_BUILDS_TO_KEEP: '6',
+    //the number of artifacts to keep for the job on Jenkins. optional. recommended value is '5'
+    NUMBER_ARTIFACTS_TO_KEEP: '6',
+    //the time to let the pipeline run before timing out. optional. recommended value is '9'
+    TIMEOUT_TIME: 10,
+    //the type of time to let the pipeline run before timing out. optional. recommended value is 'HOURS'
+    TIMEOUT_UNITS: 'HOURS'
+)

@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+   <modelVersion>4.0.0</modelVersion>
+
+   <groupId>com.harris</groupId>
+   <artifactId>gs-maven</artifactId>
+   <packaging>jar</packaging>
+   <version>0.1.0</version>
+
+   <properties>
+      <maven.compiler.source>1.8</maven.compiler.source>
+      <maven.compiler.target>1.8</maven.compiler.target>
+   </properties>
+
+   <dependencies>
+      <!-- tag::junit[] -->
+      <dependency>
+         <groupId>junit</groupId>
+         <artifactId>junit</artifactId>
+         <version>4.12</version>
+         <scope>test</scope>
+      </dependency>
+      <!-- end::junit[] -->
+   </dependencies>
+
+   <build>
+      <plugins>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-shade-plugin</artifactId>
+            <version>2.1</version>
+            <executions>
+               <execution>
+                  <phase>package</phase>
+                  <goals>
+                     <goal>shade</goal>
+                  </goals>
+                  <configuration>
+                     <transformers>
+                        <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                           <mainClass>hello.HelloWorld</mainClass>
+                        </transformer>
+                     </transformers>
+                     </configuration>
+               </execution>
+            </executions>
+         </plugin>
+         <plugin>
+            <!-- Configuration to run JaCoCo code coverage tool. -->
+            <groupId>org.jacoco</groupId>
+            <artifactId>jacoco-maven-plugin</artifactId>
+            <version>0.8.3</version>
+            <executions>
+               <execution>
+               <!-- This execution step will take place before the build starts and sets up the location to 
+                    store the code coverage data file. It also sets a property with the JaCoCo arguments that
+                    is used by the SureFire plugin when running the unit tests
+               -->
+                  <id>pre-unit-test</id>
+                  <goals>
+                     <goal>prepare-agent</goal>
+                  </goals>
+                  <configuration>
+                     <!-- Sets the path to the file which contains the execution data. -->
+                      <destFile>${project.build.directory}/coverage-reports/jacoco-ut.exec</destFile>
+                      <!-- Sets the name of the property containing the settings for JaCoCo runtime agent. -->
+                      <propertyName>surefireArgLine</propertyName>
+                  </configuration>
+               </execution>
+               <!-- Ensures that the code coverage report for unit tests is created after unit tests have been run. -->
+               <execution>
+               <!-- This execution step will generate the code coverage report from the data file generated when the unit tests are run. -->
+                  <id>post-unit-test</id>
+                  <phase>test</phase>
+                  <goals>
+                     <goal>check</goal>
+                     <goal>report</goal>
+                  </goals>
+                  <configuration>
+                     <!-- Sets the path to the file which contains the execution data. Must match the value from the prepare-agent goal. -->
+                     <dataFile>${project.build.directory}/coverage-reports/jacoco-ut.exec</dataFile>
+                     <!-- Sets the output directory for the code coverage report. -->
+                     <outputDirectory>${CODE_COVERAGE_REPORT_FOLDER}</outputDirectory>
+                     <rules>
+                        <!-- Sets the rules that specify the required code coverage. -->
+                        <rule>
+                           <element>BUNDLE</element>
+                              <limits>
+                                 <limit>
+                                    <counter>LINE</counter>
+                                    <value>COVEREDRATIO</value>
+                                    <minimum>0.30</minimum>
+                                 </limit>
+                              </limits>
+                        </rule>
+                     </rules>
+                  </configuration>
+               </execution>
+            </executions>
+         </plugin>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+               <artifactId>maven-compiler-plugin</artifactId>
+               <version>3.1</version>
+               <configuration>
+                  <source>1.8</source>
+                  <target>1.8</target>
+               </configuration>
+         </plugin>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <version>2.22.1</version>
+            <configuration>
+               <useSystemClassLoader>false</useSystemClassLoader>
+               <!-- Sets the VM argument line used when unit tests are run.. Set by JaCoCo plugin in an execution step. -->
+               <argLine>${surefireArgLine}</argLine>
+            </configuration>
+         </plugin>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-site-plugin</artifactId>
+            <version>3.7.1</version>
+         </plugin>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-project-info-reports-plugin</artifactId>
+            <version>3.0.0</version>
+         </plugin>
+      </plugins>
+   </build>
+
+   <!-- spotbugs maven plugin -->
+   <reporting>
+      <plugins>
+         <plugin>
+            <groupId>com.github.spotbugs</groupId>
+            <artifactId>spotbugs-maven-plugin</artifactId>
+            <version>3.1.12.2</version>
+            <configuration>
+               <xmlOutput>true</xmlOutput>
+               <!-- Optional directory to put spotbugs xdoc xml report -->
+               <xmlOutputDirectory>target/site</xmlOutputDirectory>
+            </configuration>
+            </plugin>
+      </plugins>
+   </reporting>
+
+   <!-- Typically there would be two repositories here - one to store snapshots and one to store releases -->
+   <distributionManagement>
+      <repository>
+         <id>harris</id>
+         <name>lnsvr0310.gcsd.harris.com-releases</name>
+         <url>https://lnsvr0310.gcsd.harris.com:8443/artifactory/devops_factory_maven</url>
+      </repository>
+   </distributionManagement>
+
+</project>

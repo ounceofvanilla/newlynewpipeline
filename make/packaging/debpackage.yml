@@ -1,0 +1,14 @@
+--- # Document start.
+GLOBALS:
+  base_artifactory_url: https://lnsvr0310.gcsd.harris.com:8443/artifactory/devops_factory_debian
+
+EXAMPLE_APP:
+  zip_name: example_app.zip
+  # parseYaml should resolve BUILD_NUMBER
+  destination_path: Debian/Deliverable/Build-${BUILD_NUMBER}
+  structure:
+    SampleMake:
+      contents:
+        exampleapp:
+          source_path: Debian/ExampleApp/1.0.0-${BUILD_NUMBER}/ExampleApp.deb
+# Document end

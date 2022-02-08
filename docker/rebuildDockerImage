@@ -1,0 +1,37 @@
+#!/bin/bash
+usage() {
+  echo "Usage: $0 -i <image> -r <registry URL> -t <tag>" 1>&2;
+  exit 1; }
+
+while getopts "i:t:r:" o; do
+    case "${o}" in
+        i)
+            IMAGE=${OPTARG}
+            ;;
+        r)
+            REGISTRY_URL=${OPTARG}
+            ;;
+        t)
+            TAG=${OPTARG}
+            ;;
+        *)
+            usage
+            ;;
+    esac
+done
+
+if [[ -z "${IMAGE}" ||  -z "${TAG}" ]]
+then
+    usage
+fi
+
+echo "${IMAGE}:${TAG}" > $(dirname $0)/${IMAGE}/docker/image/DOCPF_DOCKER_VERSION
+docker rmi ${IMAGE}:${TAG}
+docker build -t ${IMAGE}:${TAG} --force-rm $(dirname $0)/${IMAGE}/docker
+
+if [ -n "${REGISTRY_URL}" ]
+then
+	docker rmi ${REGISTRY_URL}/${IMAGE}:${TAG}
+	docker tag ${IMAGE}:${TAG} ${REGISTRY_URL}/${IMAGE}:${TAG}
+	docker push ${REGISTRY_URL}/${IMAGE}:${TAG}
+fi

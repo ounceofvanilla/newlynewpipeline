@@ -1,0 +1,11 @@
+#!/bin/bash
+
+  # collect latest L3Harris certificates
+  sudo sh -c "echo | openssl s_client -showcerts -servername lnsvr0310.gcsd.harris.com \
+  -connect lnsvr0310.gcsd.harris.com:8443 2>/dev/null \
+  | awk '/-----BEGIN CERTIFICATE-----/, /-----END CERTIFICATE-----/' >> /usr/local/share/ca-certificates/L3Harris_ca-certificates.crt"
+  # update trust store
+  sudo update-ca-certificates
+  # link updated certificates to certifi package
+  sudo rm -f /usr/lib/python3/dist-packages/certifi/cacert.pem
+  sudo ln -s /etc/ssl/certs/ca-certificates.crt /usr/lib/python3/dist-packages/certifi/cacert.pem

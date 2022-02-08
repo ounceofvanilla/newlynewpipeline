@@ -1,0 +1,120 @@
+stage('Load Shared Library'){
+	try {
+	   library identifier: "devops-pipelines_branch@${env.PIPELINE_VERSION}",
+		  retriever: modernSCM(
+				[
+				   $class: 'GitSCMSource',
+				   remote: 'https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/devops-pipelines.git',
+				]
+		  )
+	} catch(Exception e) {
+	   echo "WARNING - tried to load shared pipeline library version: ${env.PIPELINE_VERSION}, but branch/tag does not exist in library repo. Using master instead."
+	   library identifier: "devops-pipelines@master",
+		  retriever: modernSCM(
+				[
+				   $class: 'GitSCMSource', 
+				   remote: 'https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/devops-pipelines.git',
+				]
+		  )
+	   }
+	} 
+	
+	runPipeline(
+	   //machine that the jenkins pipeline will run on. required
+	   JENKINS_AGENT: 'WINDOWS_10_LAB_AGENT',
+	   
+	   //parameter that controls whether notifications will be sent when the job is completed. Default is 'false'. If 'true', default processing is to 
+	   //send an email to the user that submitted the job, and to any email addresses (comma separated list) in the EMAIL_RECIPIENTS parameter on the job.
+	   SEND_NOTIFICATION: 'true',
+	   
+	   //root of source code. optional. recommended value is '.'
+	   PROJECT_ROOT: '.',
+	   //location of the source code. optional. recommended value is 'src' 
+	   //if you are using opencppcoverage for code coverage, you must use a backslash
+	   SOURCE_CODE_DIRECTORY: 'src',
+	   //location of the unit test code. optional. recommended value is 'test'   
+	   UNIT_TEST_DIRECTORY: 'test\\src',
+	   
+	   //if you want the build tool to run. optional. recommended value is 'true'. Must be String value.
+	   RUN_BUILD: 'true',
+	   //build tool for the project. required. 'setuptools' for python, 'maven' for java, 'make' for c++, 'msbuild' for c#
+	   BUILD_TOOL: 'msbuild',
+	   //if you want to use Nuget to restore dependencies. optional. recommended value is 'false'. Must be String value.
+	   USE_NUGET: 'true',
+	   
+	   //if you want to run unit tests. optional. recommended value is 'true'. Must be String value.
+	   RUN_UNIT_TEST: 'true',
+	   //unit testing framework options: VSTest, GoogleTest, JUnit, pytest, or unittest. required. 
+	   UNIT_TEST_CHOICE: 'GoogleTest',
+	   
+	   //if you want to run static code analysis. optional. recommended value is 'true'. Must be String value.
+	   RUN_STATIC_CODE_ANALYSIS: 'true',
+	   //tool used to perform static code analysis. options: SonarQube, Klocwork, CPPCheck, Pylint, findbugs, spotbugs. required.
+	   STATIC_CODE_ANALYSIS_CHOICE: 'CPPCheck',
+	   
+	   //If you want to run static application security testing. Optional. Recommended value is 'true'. Must be String value.
+	   RUN_STATIC_APPLICATION_SECURITY: 'false',
+	   
+	   //if you want to run code coverage. optional. recommended value is 'true'. Must be String value.
+	   RUN_CODE_COVERAGE: 'true',
+	   //options: OpenCover, GCov, pytest-cov, coverage. required
+	   CODE_COVERAGE_CHOICE: 'opencppcoverage',
+	   
+	   //if you want to run artifact management. optional. recommended value is 'true'. Must be String value.
+	   RUN_ARTIFACT_MANAGEMENT: 'true',
+	   //artifact repository type options: Generic, NuGet, Maven, PyPi. required
+	   ARTIFACT_MANAGEMENT_CHOICE: 'generic',
+	   //location of the artifact to store in artifact management. required      
+	   ARTIFACT_LOCATION: 'src\\x64\\Release',
+	   //if subfolders should be searched while looking for files to push to artifact management
+	   ARTIFACT_RECURSIVE_SEARCH: 'false',
+	   
+	   
+	   //name of the artifacts to store in artifact management. supports wildcards. optional. recommended value is '*'
+	   ARTIFACT_FILENAME_PATTERN: 'HelloWorld.exe',
+	   //location of the artifact management tool. required
+	   ARTIFACT_URL: 'https://lnsvr0310.gcsd.harris.com:8443/artifactory/devops_factory_generic',
+	   //if you want to replicate the local directory structure of the files in artifact management. default value is false.
+	   ARTIFACT_REPLICATE_LOCAL_PATH_FLAG : 'true',
+	   //parent directory that the artifact will be stored in on the artifact management tool. optional. recommended value is ''
+	   GROUP_ID: 'Make',
+	   //subdirectory that the artifact will be stored in on the artifact management tool. optional. recommended value is ''
+	   ARTIFACT_ID: 'HelloWorld',
+	   //immediate directory that the artifact will be stored in on the artifact management tool. used for versioning the artifact. optional. recommended value is '1.0.0'
+	   VERSION_NUMBER: '1.0.0',
+	   //directory location for program specific pre/post processing. optional. recommended value is ''. 
+	   PROGRAM_SPECIFIC_SCRIPT: '',
+	   
+	   //if you want to deploy artifacts. default value is 'true'
+	   RUN_DEPLOY_ARTIFACTS: 'false',
+	   
+	   //MSBuild specific params
+	   //solution file's directory. required
+	   SOLUTION_FILE: 'src\\HelloWorld.sln',
+	   //the GoogleTest binary produced that will be run
+	   GT_TEST_BINARY: 'src\\x64\\Release\\HelloWorldTest.exe',
+	
+	   //if you want the prebuild tool to run. optional. recommended value is 'true'. Must be String value
+	   RUN_PREBUILD: 'true',
+	   // location of the artifact management tool to get the dependencies from. required
+	   ARTIFACTORY_DEPENDENCY_URL: 'https://lnsvr0310.gcsd.harris.com:8443/artifactory/api/nuget/devops_factory_nuget',
+	   //prebuild tool for project. required. 'cmake' for c/c++ on Unix, 'nuget' for C# on Windows. 'qmake' for Qmake
+	   PREBUILD_TOOL: 'nuget',
+	   
+	   //build configuration options: 'Debug' or 'Release'. required
+	   BUILD_CONFIGURATION: 'Release',
+	   //build platform options: 'Any CPU', 'x86', 'x64'. required
+	   BUILD_PLATFORM: 'x64',
+	   
+	   // The number of builds to keep for the job on Jenkins (optional). Will not limit the number of builds kept if blank.
+	   // Note: you may use both NUMBER_BUILDS_TO_KEEP and DAYS_BUILDS_TO_KEEP. If you would not like to use one, just leave it blank.
+	   NUMBER_BUILDS_TO_KEEP: '6',
+	   // The number of days' worth of builds to keep for the job on Jenkins (optional). Will not limit the number of days builds are kept if blank.
+	   DAYS_BUILDS_TO_KEEP: '',  
+	   //the number of artifacts to keep for the job on Jenkins. optional. recommended value is '5'
+	   NUMBER_ARTIFACTS_TO_KEEP: '6',
+	   //the time to let the pipeline run before timing out. optional. recommended value is '9'
+	   TIMEOUT_TIME: 10,
+	   //the type of time to let the pipeline run before timing out. optional. recommended value is 'HOURS'
+	   TIMEOUT_UNITS: 'HOURS'
+	)

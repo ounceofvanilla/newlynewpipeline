@@ -1,0 +1,134 @@
+stage('Load Shared Library'){
+try {
+    library identifier: "devops-pipelines_branch@${env.PIPELINE_VERSION}",
+        retriever: modernSCM(
+            [
+                $class: 'GitSCMSource',
+				credentialsId: 'DOCPF_CREDENTIALS',
+                remote: "${DOCPF_LIBRARY_URL}",
+            ]
+        )
+} catch(Exception e) {
+    echo "WARNING - tried to load shared pipeline library version: ${env.PIPELINE_VERSION}, but branch/tag does not exist in library repo. Using master instead."
+    library identifier: "devops-pipelines@master",
+        retriever: modernSCM(
+            [
+                $class: 'GitSCMSource', 
+				credentialsId: 'DOCPF_CREDENTIALS',
+                remote: "${DOCPF_LIBRARY_URL}",
+            ]
+        )
+    }
+} 
+
+runPipeline(
+    //machine that the jenkins pipeline will run on. required
+    JENKINS_AGENT: 'WINDOWS_10_LAB_AGENT',  
+
+    //parameter that controls whether notifications will be sent when the job is completed. Default is 'false'. If 'true', default processing is to 
+    //send an email to the user that submitted the job, and to any email addresses (comma separated list) in the EMAIL_RECIPIENTS parameter on the job.
+    SEND_NOTIFICATION: 'true',
+
+    //root of source code. optional. recommended value is '.'
+	PROJECT_ROOT: '.',                 
+    //location of the source code. optional. recommended value is 'src' 
+    SOURCE_CODE_DIRECTORY: 'src\\HelloWorld',  
+    //location of the unit test code. optional. recommended value is 'unittest'     
+    UNIT_TEST_DIRECTORY: 'test\\HelloWorldTest',
+    
+    //if you want the build tool to run. optional. recommended value is 'true'. Must be String value.
+  	RUN_BUILD: 'true',
+    //build tool for the project. required. 'setuptools' for python, 'maven' for java, 'make' for c++, 'msbuild' for c#                    
+    BUILD_TOOL: 'msbuild',  
+    //if you want to use Nuget to restore dependencies. optional. recommended value is 'false'. Must be String value.
+    USE_NUGET: 'false',
+    
+    //if you want to run unit tests. optional. recommended value is 'true'. Must be String value.
+  	RUN_UNIT_TEST: 'true',
+    //unit testing framework options: VSTest, GoogleTest, JUnit, pytest, or unittest. required.      
+    UNIT_TEST_CHOICE: 'VSTest',
+    
+    //if you want to run static code analysis. optional. recommended value is 'true'. Must be String value.
+  	RUN_STATIC_CODE_ANALYSIS: 'true',    
+    //tool used to perform static code analysis. options: SonarQube, Klocwork, CPPCheck, Pylint, spotbugs. required.
+    STATIC_CODE_ANALYSIS_CHOICE: 'Klocwork',
+  	
+    //SONARQUBE project name. optional. recommended value is 'PipelineProject'
+    SONARQUBE_PROJECT_NAME: 'msbuild-csharp',
+    //SONARQUBE project key. optional. recommended value is 'PIPELINE'
+  	//SONARQUBE_PROJECT_KEY: '', 
+    //url to the SONARQUBE server. required
+    SONARQUBE_URL: 'http://lnvle2289.gs.myharris.net:9000', 
+
+  	//if the Klocwork results should be published to the test result graph
+    PUBLISH_KLOCWORK_RESULTS: 'false',
+    
+    //if you want to run code coverage. optional. recommended value is 'true'. Must be String value.
+  	RUN_CODE_COVERAGE: 'true',                
+    //options: OpenCover, GCov, pytest-cov, coverage. required
+    CODE_COVERAGE_CHOICE: 'OpenCover',     
+    //file name/path of code coverage test results. required.
+
+    //if you want to run artifact management. optional. recommended value is 'true'. Must be String value.
+  	RUN_ARTIFACT_MANAGEMENT: 'true',     
+    //artifact repository type options: Generic, NuGet, Maven, PyPi. required
+    ARTIFACT_MANAGEMENT_CHOICE: 'NuGet',
+    //location of the artifact to store in artifact management. required      
+    ARTIFACT_LOCATION: 'src/HelloWorld/bin/Release',
+    //name of the artifacts to store in artifact management. supports wildcards. optional. recommended value is '*'
+    ARTIFACT_FILENAME_PATTERN: '*.exe',
+    //location of the artifact management tool. required
+    ARTIFACT_URL: "${ARTIFACT_SERVER_URL}",
+    // location of the artifact management tool to get the dependencies from. required
+    ARTIFACTORY_DEPENDENCY_URL: 'https://lnsvr0310.gcsd.harris.com:8443/artifactory/api/nuget/devops_factory_nuget',
+    //parent directory that the artifact will be stored in on the artifact management tool. optional. recommended value is ''
+  	GROUP_ID: 'MSBuild',
+    //subdirectory that the artifact will be stored in on the artifact management tool. optional. recommended value is ''
+    ARTIFACT_ID: 'HelloWorld',
+    //immediate directory that the artifact will be stored in on the artifact management tool. used for versioning the artifact. optional. recommended value is '1.0.0'
+	VERSION_NUMBER: '1.0.0',
+
+    //if you want to run functional tests. optional. recommended value is 'false'. Must be String value.
+	RUN_FUNCTIONAL_TEST: 'true',
+    //functional test tool options: testcomplete, testexecute. required
+	FUNCTIONAL_TEST_CHOICE: 'testexecute',
+    //path to TestExecute project suite file. required if chose testexecute.
+    TESTEXECUTE_PROJECT_SUITE_FILE: 'test/functional/HelloWorldTest/HelloWorldTest.pjs',
+  
+    //C# specific params
+    //solution file's directory. required
+    SOLUTION_FILE: 'src\\HelloWorld\\HelloWorld_Vault.sln',
+    //nuspec file's directory. required
+  	NUSPEC_FILE: 'HelloWorld.nuspec',
+    //test binary folder's directory. required
+    TEST_BINARY_FOLDER: 'test\\HelloWorldTest\\bin',
+    //test binary pattern used. Supports wildcards. required
+    TEST_BINARY_PATTERN: '*Test.dll',
+    //build configuration options: 'Debug' or 'Release'. required
+    BUILD_CONFIGURATION: 'Release',
+    //build platform options: 'Any CPU', 'x86', 'x64'. required
+    BUILD_PLATFORM: 'Any CPU',
+    //directory location for program specific pre/post processing. optional. recommended value is ''.
+    PROGRAM_SPECIFIC_SCRIPT: '',
+    
+    //the number of builds to keep for the job on Jenkins. optional. disabled by default.
+    //Note: you are able to use both NUMBER_BUILDS_TO_KEEP and DAYS_BUILDS_TO_KEEP. If you would not like to use one, just leave it blank.
+    NUMBER_BUILDS_TO_KEEP: '6',
+    //the number of days worth of builds to keep for the job on Jenkins. optional. disabled by default.
+    DAYS_BUILDS_TO_KEEP: '',  
+    //the number of artifacts to keep for the job on Jenkins. optional. recommended value is '5'
+    NUMBER_ARTIFACTS_TO_KEEP: '6',
+    //the time to let the pipeline run before timing out. optional. recommended value is '9'
+    TIMEOUT_TIME: 10,
+    //the type of time to let the pipeline run before timing out. optional. recommended value is 'HOURS'
+    TIMEOUT_UNITS: 'HOURS',
+    
+    // More than this many tests need to fail in order to set the build to unstable. optional. recommended value is '0'.
+    VSTEST_FAILED_THRESHOLD: '0',
+    // More than this many new tests need to fail since the last run to set the build to unstable. optional. recommended value is ''.
+    VSTEST_FAILED_NEW_THRESHOLD: '',
+    // More than this many tests need to be skipped in order to set the build to unstable. optional. recommended value is ''.
+    VSTEST_SKIPPED_THRESHOLD: '',
+    // More than this many new tests need to be skipped since the last run to set the build to unstable. optional. recommended value is ''.
+    VSTEST_SKIPPED_NEW_THRESHOLD: ''
+)

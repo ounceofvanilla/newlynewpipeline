@@ -1,0 +1,41 @@
+node("master") {
+   step([$class: 'WsCleanup'])
+}
+
+node("${JENKINS_SLAVE}") {
+   step([$class: 'WsCleanup'])
+   bat """
+      cleartool startview ${CLEARCASE_VIEW_NAME}
+      cleartool catcs -tag ${CLEARCASE_VIEW_NAME}
+      cleartool mount \\${CLEARCASE_VOB_NAME} || exit 0
+   """
+  
+   // When we switch into the pipeline, it changes the workspace since we reenter a node block.
+   // Therefore, we need to copy our source code from ClearCase into our pipeline workspace. 
+   dir ("${env.workspace}@2") {
+      bat """
+         robocopy /E "M:\\${CLEARCASE_VIEW_NAME}\\${CLEARCASE_VOB_NAME}\\${CLEARCASE_VIEW_PATH}" . || exit 0
+      """
+     
+      // Find private files and delete from source before running ClearCase job
+      def excludeFiles = bat(script: """
+         @echo off
+         cleartool ls -r -view_only M:\\${CLEARCASE_VIEW_NAME}\\${CLEARCASE_VOB_NAME}\\${CLEARCASE_VIEW_PATH}
+      """, returnStdout: true)
+      excludeFiles = "${excludeFiles.replaceAll(/M:\\${CLEARCASE_VIEW_NAME}\\${CLEARCASE_VOB_NAME}\\${CLEARCASE_VIEW_PATH}\\?/, '')}"
+      def excludedFileList = excludeFiles.split('\n')
+      excludedFileList.each { filePath ->
+         if (!filePath.contains("Rule: CHECKEDOUT")) {
+            bat """
+               del /F /Q \"${filePath}\"
+            """
+         }
+      }
+      bat """
+         git init .
+      """
+   }
+   // This will kick off our pipeline from the Jenkinsfile in ClearCase.
+   load "${env.workspace}@2\\${JENKINSFILE_PATH}"
+   step([$class: 'WsCleanup'])
+}

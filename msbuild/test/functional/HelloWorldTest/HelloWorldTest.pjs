@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Root signature="{24B6FA0B-0143-461A-9758-AEB9E9A9428B}" version="14.0" key="{35D79C77-D845-4646-8433-E0B9DA6ECA1D}">
+	<children>
+		<child name="HelloWorldTest" key="{CF69A33F-BDC9-4AF5-9AFE-065DA02E1F92}" path="HelloWorldTest\HelloWorldTest.mds" />
+	</children>
+	<testItems key="{35E54512-6CE0-4211-9285-D595C7DB3C7F}">
+		<children>
+			<testItem key="{CF69A33F-BDC9-4AF5-9AFE-065DA02E1F92}" enabled="True" timeout="0" stopOnError="True" description="" />
+		</children>
+	</testItems>
+	<variables key="{55D23CEA-9EA0-4DAD-A4C1-E5E8C2F75E84}">
+		<data Version="3" />
+	</variables>
+	<analysis key="{6ED342A3-8A17-4719-8014-1159FF0E01E0}" />
+	<scc key="{00000000-0000-0000-0000-000000000000}" name="">
+		<data />
+	</scc>
+	<extender key="{1A3FC97E-9A66-4716-B166-35D10B4146E0}">
+		<CrossBrowserTesting Enable="True" />
+	</extender>
+</Root>

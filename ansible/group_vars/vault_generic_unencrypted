@@ -1,0 +1,8 @@
+build_tool       : maven_generic
+version_number   : 1.0.0
+group_id         : Maven 
+artifact_id      : HelloWorld
+artifact         : gs-maven-1.0.0.jar
+artifactory_url  : https://lnsvr0310.gcsd.harris.com:8443/artifactory/devops_factory_generic
+artifact_dest    : /tmp
+

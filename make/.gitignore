@@ -1,0 +1,8 @@
+/.project
+/.metadata/
+**/x64/
+**/.vs/
+**/*.user
+**/*.htm
+**/packages
+**/Debug/

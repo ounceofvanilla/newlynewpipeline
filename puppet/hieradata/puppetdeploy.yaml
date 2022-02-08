@@ -1,0 +1,7 @@
+# Default values
+puppetdeploy::in_api_key: AKCp5dL3BV6m98omLkfiiGu1F8r67DbFzGSdi4jXj56CKPauwjYfZ3G6fC5NwmsGhdTPLjVat
+puppetdeploy::in_artifact_url: https://lnsvr0310.gcsd.harris.com:8443/artifactory/devops_factory_generic
+puppetdeploy::in_group_id: Make
+puppetdeploy::in_artifact_id: HelloWorld
+puppetdeploy::in_version_number: 1.0.0
+puppetdeploy::in_base_deploy_path: C:\puppet\deployments

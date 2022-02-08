@@ -1,0 +1,204 @@
+script {
+	//VLE_List is a Job parameter that contains the VLEs that will be monitored. For each one we will run three functions. Memory, CPU and Disk Checks.
+      String[] VLEparams = VLE_LIST.split("\\r?\\n")
+      VLEparams.each { vle ->
+      println "Running ${vle} job"
+      node("${vle}") 
+      {
+         stage ("Memory Check ${vle}")
+         {
+            memoryCheck("${vle}")
+         }
+         stage ("Disk Check ${vle}")
+         {
+             diskUtilizationCheck("${vle}")
+         }
+         stage ("CPU Check ${vle}")
+         {
+             cpuCheck("${vle}")
+         }
+      }
+      
+   }
+}
+
+
+def memoryCheck(String vle)
+{
+   echo "INFO - Running Memory Check on ${vle}"
+   if(isUnix())
+   {
+      //Threshold for Linux Memory Usage. Obtained via a Job Parameter.
+      double MEMORY_USAGE_PERCENT_THRESHOLD = MEMORY_USAGE_THRESHOLD
+      //First we use the 'free' command and grab the Line with the 'Mem' info.
+      //Using awk we select the field we want to calculate the percentage ($4:Used and $2:Total)
+      //Calculate the Free Memory Percent with the formula : Used/Total * 100
+      freeMemoryPercent = sh (
+                     script: "free | grep Mem | awk '{print \$4/\$2 * 100.0}'",
+                     returnStdout: true
+               ).trim()
+      double memoryUsagePercent = 100 - (freeMemoryPercent as double)
+      echo "Memory Usage Percent = ${memoryUsagePercent}%"
+      //Compare free memory percent with the threshold
+      if (MEMORY_USAGE_PERCENT_THRESHOLD <= memoryUsagePercent)
+         {
+            catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE')
+            {
+               throw new Exception("${vle} is low on memory. Free memory available is only ${freeMemoryPercent}%")
+            }
+         }
+         else
+         {
+            echo "Memory Usage on ${vle} is below threshold ${MEMORY_USAGE_PERCENT_THRESHOLD}%"
+         }
+   }
+   else
+   {
+      echo "See Disk Utilization Check Results."
+   }
+}
+
+def cpuCheck(String vle)
+{  
+   echo "INFO - Running CPU Check on ${vle}"
+   //Threshold for CPU Usage. The value is obtained from a Jenkins Job parameter.
+   double CPU_USAGE_PERCENT_THRESHOLD = CPU_USAGE_THRESHOLD
+   if(isUnix())
+   {
+      //Command will retrieve the CPU Usage from the top command. It uses grep to obtain the line with the CPU value and then
+      //uses cut to extract cpu data.
+      cpuUsage= sh (
+                     script: "top -b -d1 -n1|grep -i \"Cpu(s)\"|head -c21|cut -d ' ' -f3|cut -d '%' -f1",
+                     returnStdout: true
+               ).trim()
+      //For some Linux Systems the previously used command has to be modified and use f2 instead of f3. This is the second case
+      cpuUsage2= sh (
+                     script: "top -b -d1 -n1|grep -i \"Cpu(s)\"|head -c21|cut -d ' ' -f2|cut -d '%' -f1",
+                     returnStdout: true
+               ).trim()
+      double cpuUsageDouble
+      try 
+      {
+         cpuUsageDouble = cpuUsage as double
+      }
+      catch(NumberFormatException Ex)
+      {
+         cpuUsageDouble = cpuUsage2 as double
+      }
+      //Compare double value with CPU Threshold and mark stage as Unstable if CPU threshold is lower than the actual CPU Value
+      if(CPU_USAGE_PERCENT_THRESHOLD <= cpuUsageDouble)
+      {
+         catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE')
+         {
+            throw new Exception("The CPU Usage in ${vle} is High. Current value is ${cpuUsageDouble}%")
+         }
+      }
+      else
+      {
+        echo "The CPU Usage on ${vle} is below threshold ${CPU_USAGE_PERCENT_THRESHOLD}%. Current value is ${cpuUsageDouble}%"
+      }
+   }
+   else
+   {
+      def cpuLoadPercentage = bat (
+                     script: "wmic cpu get loadpercentage",
+                     returnStdout: true
+               ).trim()
+      CPULines = cpuLoadPercentage.split("\n")
+      //The reason this iteration starts at 2 is because We ignore the first 2 lines from the Command output.
+      for (i = 2; i <CPULines.length; i++) 
+      {
+         //Trim unwanted spaces
+         CPUValue = CPULines[i].trim()
+         //Remove all non printable characters
+         CPUValueTrimmed = CPUValue.replaceAll("\\p{C}", "");
+         //convert to double and compare to threshold
+         double CPUValueDouble = CPUValueTrimmed
+         cpuNumber = i - 1
+         if(CPU_USAGE_PERCENT_THRESHOLD <= CPUValueDouble)
+         {
+            catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE')
+            {
+               throw new Exception("There CPU Load Percentage for CPU: ${cpuNumber} on ${vle} is High. The threshold is ${CPU_USAGE_PERCENT_THRESHOLD}%. Current value ${CPUValueDouble}%.")
+            }
+         }
+         else
+         {
+            echo "The CPU Load Percentage for CPU: ${cpuNumber} on ${vle} is below threshold ${CPU_USAGE_PERCENT_THRESHOLD}%. Current value is ${CPUValueDouble}%"      
+         }
+        }
+   }
+   
+}
+
+//This function will check the Disk Information of the vle and compare it to a threshold and determine
+//if the value is too low.
+def diskUtilizationCheck(String vle)
+{
+   echo "INFO - Running Disk Utilization Check on ${vle}"
+   double DISK_USAGE_PERCENT_THRESHOLD = DISK_USAGE_THRESHOLD
+   if(isUnix())
+   {
+      //The commmand in the script will retrieve the percent of usage of each partition.
+      //It uses df command then grep to obtain only certain rows and then awk to extract specific values.
+      diskPercentUsage= sh (
+                     script: "df -H | grep -vE '^Filesystem|tmpfs|cdrom' | awk '{ print \$5 \" \" \$1 }'",
+                     returnStdout: true
+               ).trim()
+      //This section iterates through the results and compare the value of the Disk Percent Usage with the Threshold
+      echo "Disk Percent Usage = ${diskPercentUsage}%"
+      diskPercentUsage.split("\n").each {param ->
+               def nameAndValue = param.split(" ")
+               double diskPercentDouble = nameAndValue[0]-'%'
+               if (DISK_USAGE_PERCENT_THRESHOLD <= diskPercentDouble)
+               {
+                  echo "WARNING value of ${diskPercentDouble} in ${nameAndValue[1]} is above threshold"
+                  //Ignore the /dev/loop partitions
+                  if (!nameAndValue[1].contains('dev/loop'))
+                  {
+                     catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE')
+                     {
+                        throw new Exception("Warning Disk Percent Usage is high on ${vle} . Current value is ${diskPercentDouble}% in ${nameAndValue[1]}")
+                     }
+                  }
+               }
+               else
+               {
+                  echo "On ${vle}, current value of Disk Percent Usage is ${diskPercentDouble}% in ${nameAndValue[1]}. Disk Percent Usage is below the ${DISK_USAGE_PERCENT_THRESHOLD}% threshold."
+               }
+      }
+   }
+   else
+   {
+      //Command will obtain the amount of free bytes in the Disk C
+      volumeDiskFree= bat (
+                     script: """@echo off 
+                     fsutil volume diskfree c:""",
+                     returnStdout: true
+               ).trim()
+      echo "Volume Disk Free = ${volumeDiskFree}"
+      //Create a List of the results (by line) of the command
+      def linesList = volumeDiskFree.split("\n")
+      //Extracts the Bytes of each Line
+      def bytesList = linesList.collect { it.replaceAll(/^[^:]+: +(\d+) +.+$/, '$1') }
+      //The first value is the free bytes
+      double freeBytes = bytesList[0]
+      //The second value is the total bytes
+      double totalBytes = bytesList[1]
+      //Calculates the Percentage
+      double percentUsageBytes = 100 - ((freeBytes/totalBytes) * 100)
+      echo "Usage Percent ${percentUsageBytes}%"
+      //Compare Bytes usage Value with Volume Disk Threshold
+      if (DISK_USAGE_PERCENT_THRESHOLD <= percentUsageBytes)
+      {
+          catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE')
+               {
+                throw new Exception("WARNING Volume Disk Usage is HIGH on ${vle}: ${percentUsageBytes}% Bytes Usage")
+               }
+      }
+      else
+      {
+         "Disk Percent Usage on ${vle} is below the ${DISK_USAGE_PERCENT_THRESHOLD}% threshold.${percentUsageBytes}% Bytes Usage"
+      }
+   }
+}

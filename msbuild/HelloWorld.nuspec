@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+    <metadata>
+        <id>HelloWorld</id>
+        <version>0.0.1</version>
+        <authors>Devops Factory</authors>
+        <description>Initial release of Hello World functionality</description>
+    </metadata>
+    <files>
+    	<file src="src/HelloWorld/bin/Release/HelloWorld.exe" target="lib\net472" />
+  	</files>
+</package>

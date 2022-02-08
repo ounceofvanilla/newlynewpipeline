@@ -1,0 +1,11 @@
+#!/bin/bash
+
+  JENKINS_URL="$1"
+  JENKINS_SECRET="$2"
+  JENKINS_NAME="$3"
+  
+  #Call update certificates
+  /usr/local/bin/update-certificates
+
+  curl -k -o agent.jar "$JENKINS_URL/jnlpJars/agent.jar"
+  java -cp agent.jar hudson.remoting.jnlp.Main -headless -url "$JENKINS_URL" -workDir /home/jenkins -webSocket "$JENKINS_SECRET" "$JENKINS_NAME"

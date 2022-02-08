@@ -1,0 +1,18 @@
+--- # Document start.
+GLOBALS:
+  base_artifactory_url: https://lnsvr0310.gcsd.harris.com:8443/artifactory/devops_factory_generic
+
+EXAMPLE_APP:
+  # parseYaml should resolve PACKAGE_ARCHIVE_TYPE from job param
+  # Ony for example purposes, archive type can be hard coded in this file
+  zip_name: example_app.${PACKAGE_ARCHIVE_TYPE}
+  archive_type: ${PACKAGE_ARCHIVE_TYPE}
+  # parseYaml should resolve BUILD_NUMBER
+  destination_path: Make/Deliverable/Build-${BUILD_NUMBER}
+  structure:
+    SampleMake:
+      contents:
+        exampleapp:
+          source_path: Make/ExampleApp/1.0.0-${BUILD_NUMBER}/exampleapp
+          include_checksum: true
+# Document end
