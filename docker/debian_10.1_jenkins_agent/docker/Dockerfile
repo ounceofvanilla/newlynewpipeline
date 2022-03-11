@@ -4,8 +4,8 @@ RUN apt-get update \
     && apt-get install -y \
     curl=7.64.* \
     && mkdir /opt/coverity \
-    && curl -k --output cov-analysis-linux64-2021.06.sh https://lnsvr0499.gcsd.harris.com:8443/downloads/cov-analysis-linux64-2021.06.sh \
-    && curl -k --output /opt/coverity/analysis-license.dat https://lnsvr0499.gcsd.harris.com:8443/downloads/analysis-license.dat \
+    && curl -k --output cov-analysis-linux64-2021.06.sh https://xxx.xxx:8443/downloads/cov-analysis-linux64-2021.06.sh \
+    && curl -k --output /opt/coverity/analysis-license.dat https://xxx.xxx:8443/downloads/analysis-license.dat \
     && chmod +x cov-analysis-linux64-2021.06.sh \
     && ./cov-analysis-linux64-2021.06.sh -q --installation.dir=/opt/coverity --license.region=0 --license.agreement=agree --license.type.choice=0 --license.cov.path=/opt/coverity/analysis-license.dat
 
