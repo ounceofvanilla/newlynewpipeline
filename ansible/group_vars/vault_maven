@@ -2,7 +2,7 @@ build_tool       : maven
 version_number   : latest
 group_id         : com.harris
 artifact_id      : gs-maven
-artifactory_url  : https://lnsvr0310.gcsd.harris.com:8443/artifactory/devops_factory_maven
+artifactory_url  : https://xxx.xxx:8443/artifactory/devops_factory_maven
 artifact_dest    : /tmp
 artifact_repo_un : svc-devfac
 artifact_repo_pw : u1QS4Kn1kwa5Es51pGgR
