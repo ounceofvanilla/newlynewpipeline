@@ -4,7 +4,7 @@ try {
         retriever: modernSCM(
             [
                 $class: 'GitSCMSource',
-                remote: 'https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/devops-pipelines.git',
+                remote: 'https://xxx.xxx:8443/bitbucket/scm/devp/devops-pipelines.git',
             ]
         )
 } catch(Exception e) {
@@ -13,7 +13,7 @@ try {
         retriever: modernSCM(
             [
                 $class: 'GitSCMSource', 
-                remote: 'https://lnsvr0329.gcsd.harris.com:8443/bitbucket/scm/devp/devops-pipelines.git',
+                remote: 'https://xxx.xxx:8443/bitbucket/scm/devp/devops-pipelines.git',
             ]
         )
     }
@@ -38,6 +38,6 @@ runPipeline(
     PROGRAM_SPECIFIC_SCRIPT: 'dockerProcessing.groovy',
 
     // Docker Specific Parameters
-    REGISTRY_URL: 'https://lnvle1865.gs.myharris.net:5000',
+    REGISTRY_URL: 'https://xxx.xxx:5000',
     DOCKER_IMAGE: "${IMAGE_NAME}"
 )
