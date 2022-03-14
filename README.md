@@ -33,6 +33,13 @@ This section decribes how to create a Jenkins pipline job that will run one of t
   4. Scroll down to Pipeline and for definition select Pipeline from SCM. 
   5. Select Fit as the SCM. 
   6. For the DSOCPF sample jobs, use the following URL's in Repository URL. You will need to create a pipeline job fro each repository. 
+  
+  RUN SAMPLE JOBS
+  1. select one fo the sample jobs created above 
+  2. select build with parameters
+  3. ensure that the GUIT_BRANCH parameter matches the branch to run the source code on 
+  4. click the build button 
+  5. wait for the magic to happen
     a. for make:
       URL: https://xxx/make.git
     b. for Maven: 
